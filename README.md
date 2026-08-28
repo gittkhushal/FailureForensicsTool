@@ -509,15 +509,28 @@ research/results/
 
 ## 📚 Documentation
 
-Comprehensive documentation included:
+Comprehensive documentation is organized as follows:
 
-1. **README.md** - Project overview and features
-2. **QUICKSTART.md** - Installation and basic usage
-3. **docs/architecture.md** - Technical design decisions
-4. **docs/METHODOLOGY.md** - Research methodology and approach
-5. **docs/RESEARCH_PAPER_OUTLINE.md** - 16-section academic paper structure
-6. **PROJECT_SUMMARY.md** - Complete project overview
-7. **SESSION_COMPLETION_REPORT.md** - Implementation report
+### Main Documentation
+- **README.md** - Project overview and features (this file)
+
+### Technical Documentation (in `/docs`)
+- **docs/architecture.md** - Technical design decisions
+- **docs/METHODOLOGY.md** - Research methodology and approach
+- **docs/RESEARCH_PAPER_OUTLINE.md** - 16-section academic paper structure
+
+### Guides & Setup Documentation (in `/docs/guides`)
+- **START_HERE.md** - Quick start guide with all options
+- **QUICKSTART.md** - Installation and basic usage
+- **RUN_LOCALLY.md** - Complete local execution guide with examples
+- **VENV_SETUP.md** - Virtual environment setup (with/without venv)
+- **PROJECT_SUMMARY.md** - Complete project overview and statistics
+- **FINAL_SUMMARY.md** - Implementation completion summary
+- **GITHUB_PUSH_SUMMARY.md** - GitHub deployment report
+- **SESSION_COMPLETION_REPORT.md** - Detailed implementation report
+- **GITHUB_README.md** - Alternative GitHub README format
+
+**👉 Start here:** See [`docs/guides/START_HERE.md`](docs/guides/START_HERE.md) for quickest way to run the project!
 
 ---
 
