@@ -86,9 +86,10 @@ def render():
                     for span_id in analysis.affected_spans:
                         span = next((s for s in trace.spans if s.span_id == span_id), None)
                         if span:
+                            judge_score_str = f"{span.judge_score:.2f}" if span.judge_score else "N/A"
                             st.write(
                                 f"**{span.step_name}** | "
-                                f"Score: {span.judge_score:.2f if span.judge_score else 'N/A'}"
+                                f"Score: {judge_score_str}"
                             )
                 
                 st.divider()

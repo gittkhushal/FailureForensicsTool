@@ -1,17 +1,10 @@
 # Core
-Python==3.11
-pydantic==2.4.2
+pydantic==2.13.4
 pydantic-settings==2.0.3
 
 # LLM
 requests==2.31.0
 ollama==0.0.13
-
-# Database
-sqlite3
-
-# Data
-json
 
 # UI
 streamlit==1.28.1
@@ -20,11 +13,9 @@ networkx==3.2
 
 # Utilities
 python-dotenv==1.0.0
-uuid
-datetime
 
 # Testing
-pytest==7.4.2
+pytest==9.1.1
 pytest-cov==4.1.0
 
 # Development

@@ -215,14 +215,23 @@ class FailureRepository:
             if not row:
                 return None
             
+            # Get step_name and judge_score from spans table
+            cursor.execute(
+                "SELECT step_name, judge_score FROM spans WHERE span_id = ?",
+                (row["span_id"],)
+            )
+            span_row = cursor.fetchone()
+            step_name = span_row["step_name"] if span_row else ""
+            judge_score = span_row["judge_score"] if span_row else 0.0
+            
             failure = Failure(
                 failure_id=row["failure_id"],
                 trace_id=row["trace_id"],
                 span_id=row["span_id"],
-                step_name="",
+                step_name=step_name,
                 failure_type=FailureType(row["failure_type"]),
                 severity=row["severity"],
-                judge_score=0.0,
+                judge_score=judge_score,
                 description=row["description"],
                 evidence=json.loads(row["evidence"]) if row["evidence"] else {},
                 confirmed=row["confirmed"],

@@ -3,9 +3,24 @@
 import streamlit as st
 import json
 from src.pipeline.runner import PipelineRunner
+from src.pipeline.base import Pipeline
+from src.pipeline.intake import IntakeStep
+from src.pipeline.extraction import ExtractionStep
+from src.pipeline.classification import ClassificationStep
+from src.pipeline.summarization import SummarizationStep
 from src.tracing.instrumentation import TraceContext
 from src.storage.database import Database
 from src.storage.repositories import TraceRepository
+
+
+def create_demo_pipeline() -> Pipeline:
+    """Create the demo pipeline with all steps."""
+    pipeline = Pipeline(name="demo_pipeline")
+    pipeline.add_step(IntakeStep())
+    pipeline.add_step(ExtractionStep())
+    pipeline.add_step(ClassificationStep())
+    pipeline.add_step(SummarizationStep())
+    return pipeline
 
 
 def render():
@@ -39,16 +54,17 @@ def render():
     
     input_format = st.radio(
         "Input Format",
-        ["Text", "JSON", "Upload File"]
+        ["Text", "JSON"]
     )
     
     if input_format == "Text":
         input_data = st.text_area(
             "Input Text",
             placeholder="Enter text to process...",
-            height=200
+            height=200,
+            value="The quick brown fox jumps over the lazy dog. This is a sample text for pipeline testing."
         )
-    elif input_format == "JSON":
+    else:
         input_data = st.text_area(
             "Input JSON",
             placeholder='{"key": "value"}',
@@ -59,14 +75,7 @@ def render():
                 input_data = json.loads(input_data)
         except json.JSONDecodeError:
             st.error("Invalid JSON format")
-    else:
-        uploaded_file = st.file_uploader("Upload file", type=["txt", "json"])
-        input_data = None
-        if uploaded_file:
-            if uploaded_file.type == "application/json":
-                input_data = json.load(uploaded_file)
-            else:
-                input_data = uploaded_file.read().decode()
+            input_data = None
     
     st.divider()
     
@@ -77,13 +86,13 @@ def render():
         else:
             try:
                 with st.spinner("Executing pipeline..."):
-                    # Create pipeline runner
-                    runner = PipelineRunner()
+                    # Create demo pipeline
+                    pipeline = create_demo_pipeline()
+                    runner = PipelineRunner(pipeline=pipeline)
                     
                     # Execute with tracing
-                    with TraceContext(pipeline_name=pipeline_name) as trace:
-                        result = runner.execute_demo(input_data)
-                        trace_id = trace.trace_id
+                    output, trace = runner.run(input_data)
+                    trace_id = trace.trace_id
                     
                     # Save trace
                     db = Database()
@@ -102,8 +111,8 @@ def render():
                         st.metric("Spans", len(trace.spans))
                     
                     with col2:
-                        st.metric("Status", trace.status)
-                        st.metric("Final Score", f"{trace.final_score:.2f}" if trace.final_score else "N/A")
+                        st.metric("Status", trace.status.value)
+                        st.metric("Total Latency", f"{trace.total_latency_ms:.0f}ms")
                     
                     st.divider()
                     
@@ -115,20 +124,20 @@ def render():
                             col1, col2, col3 = st.columns(3)
                             
                             with col1:
-                                st.write(f"**Status:** {span.status}")
+                                st.write(f"**Status:** {span.status.value}")
                             with col2:
                                 st.write(f"**Latency:** {span.latency_ms:.0f}ms")
                             with col3:
-                                score = span.judge_score if span.judge_score else "N/A"
+                                score = f"{span.judge_score:.2f}" if span.judge_score else "N/A"
                                 st.write(f"**Judge Score:** {score}")
                             
                             if span.input_data:
                                 st.write("**Input:**")
-                                st.json(span.input_data)
+                                st.text(str(span.input_data)[:200])
                             
                             if span.output_data:
                                 st.write("**Output:**")
-                                st.json(span.output_data)
+                                st.text(str(span.output_data)[:200])
                             
                             if span.error:
                                 st.error(f"Error: {span.error}")
@@ -138,4 +147,5 @@ def render():
                     
             except Exception as e:
                 st.error(f"❌ Pipeline execution failed: {e}")
-                st.write(str(e))
+                import traceback
+                st.write(traceback.format_exc())

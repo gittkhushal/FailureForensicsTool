@@ -1,13 +1,15 @@
 # FailureForensicsTool: AI Pipeline Failure Analysis Framework
 
-[![Tests Passing](https://img.shields.io/badge/tests-178%2F178%20passing-brightgreen)]()
+[![Status](https://img.shields.io/badge/status-60%2D75%25%20complete-orange)]()
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-green)]()
-[![Status](https://img.shields.io/badge/status-production%20ready-green)]()
+[![Core Framework](https://img.shields.io/badge/core-production%20ready-green)]()
 
 ## 🎯 Overview
 
 **FailureForensicsTool** is a comprehensive framework for analyzing and diagnosing failures in multi-step AI pipelines. It combines LLM-based evaluation, graph-based propagation analysis, and root cause identification to systematically identify what went wrong and why.
+
+**Current Status (60-75% Complete):** Core framework fully implemented and tested. Additional enhancements planned for Phase 2.
 
 ### Key Features
 - 🔍 **Real-time trace collection** with span-level granularity
@@ -41,20 +43,20 @@
 ## 🚀 Quick Start
 
 ```bash
-# Clone/Navigate to workspace
+# Navigate to workspace
 cd d:\sem5\EDI
 
 # Install dependencies
 pip install -r requirements.txt
 
-# Run tests (178 tests, 2 seconds)
-python -m pytest tests/ -v
+# Run tests
+python -m pytest tests/ -q
 
-# Run research evaluation
+# Run research evaluation (5 scenarios)
 python research/run_evaluation.py
 
-# Launch Streamlit UI
-streamlit run app.py
+# Launch interactive UI
+python -m streamlit run app.py
 ```
 
 The UI will open at `http://localhost:8501` with 7 interactive pages for pipeline management and failure analysis.
