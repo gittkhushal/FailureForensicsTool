@@ -3,7 +3,7 @@
 import streamlit as st
 import json
 from src.pipeline.runner import PipelineRunner
-from src.tracing.trace import TraceContext
+from src.tracing.instrumentation import TraceContext
 from src.storage.database import Database
 from src.storage.repositories import TraceRepository
 
