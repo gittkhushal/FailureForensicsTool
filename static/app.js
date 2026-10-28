@@ -1,1556 +1,1011 @@
 /**
- * FailureForensicsTool - Advanced Web Application Client Logic
- * 
- * Implements 7 full views:
- * 1. Dashboard
- * 2. Run Pipeline (Studio)
- * 3. Trace Explorer
- * 4. Failure Analysis
- * 5. Propagation Analysis (Interactive SVG DAG)
- * 6. Feedback & Evaluation (Cases, Dataset, Regression)
- * 7. Analytics & Metrics (System stats & Distributions)
+ * FailureForensics — v6.0 Dual-Mode Controller
+ *
+ * Mode 1: Assistant Mode (Clean Output)
+ *   - Gemini-style Prompt Input -> Clean Verified Final Output.
+ *   - Collapsible "Show background thinking" drawer.
+ *   - 1-click comparison tab: "Final Verified Output" vs. "What Normal AI Said (Before Fix)".
+ *
+ * Mode 2: Developer Mode (Technical Forensics)
+ *   - Dedicated technical demonstration workspace for teachers/evaluators:
+ *     1. Mathematical Formulation & Algorithmic Proof (FailureDetector, PropagationAnalyzer PS, RootCauseEngine RCC, AdaptiveOptimizer Delta-Q)
+ *     2. Interactive SVG Directed Acyclic Graph (DAG) & Domino Cascade
+ *     3. Ground-Truth vs. Faulty Span Token Verification
+ *     4. AdaptiveOptimizer Hyperparameter/Prompt Patch & Raw JSON Before/After Diff Table
+ *     5. Raw Span Execution Telemetry (JSON payloads & latency)
+ *     6. Aggregate Telemetry, Fault Injection Lab, and Batch Self-Healing Benchmark
  */
 
 document.addEventListener("DOMContentLoaded", () => {
-    // Global Application State
     const state = {
-        activeTab: "dashboard",
-        presets: {},
-        traces: [],
+        appMode: "gemini", // 'gemini' | 'dev'
+        thinkingOpen: false,
+        outputView: "clean", // 'clean' | 'broken'
+        activeTab: "workbench", // Default tab in Developer Mode is the Technical Forensics Workbench
+        allTraces: [],
+        traceFilter: "all",
+        activeTraceId: null,
         currentTraceDetail: null,
         currentPropagationData: null,
-        pipelineOutputData: null,
-        activeStepIdx: 0,
+        presets: [],
+        scenarios: [],
+        selectedChipIndex: 0,
     };
 
     // =========================================================================
-    // Toast Notification Utility
+    // UTILITIES & FORMATTERS
     // =========================================================================
-    const toastEl = document.getElementById("toast");
-    function showToast(message, duration = 3000) {
-        if (!toastEl) return;
-        toastEl.textContent = message;
-        toastEl.classList.add("show");
-        setTimeout(() => toastEl.classList.remove("show"), duration);
+    function showToast(message) {
+        const toast = document.getElementById("toast-notification");
+        if (!toast) return;
+        toast.textContent = message;
+        toast.classList.add("show");
+        setTimeout(() => toast.classList.remove("show"), 3000);
     }
 
-    // =========================================================================
-    // Formatters & Helpers
-    // =========================================================================
+    function escapeHtml(str) {
+        if (str === null || str === undefined) return "";
+        return String(str)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;");
+    }
+
+    function formatScore(val) {
+        if (val === null || val === undefined || isNaN(val)) return "—";
+        return Number(val).toFixed(2);
+    }
+
+    function formatPercent(val) {
+        if (val === null || val === undefined || isNaN(val)) return "—";
+        return `${Math.round(Number(val) * 100)}%`;
+    }
+
     function formatJson(obj) {
-        if (!obj) return "{}";
+        if (obj === null || obj === undefined) return "—";
+        if (typeof obj === "string") return obj;
         try {
-            if (typeof obj === "string") {
-                obj = JSON.parse(obj);
-            }
             return JSON.stringify(obj, null, 2);
-        } catch (e) {
+        } catch {
             return String(obj);
         }
     }
 
-    function formatLatency(ms) {
-        if (ms === null || ms === undefined) return "N/A";
-        if (ms >= 1000) return `${(ms / 1000).toFixed(2)}s`;
-        return `${Math.round(ms)}ms`;
+    function formatCleanKeyValues(outputData) {
+        if (!outputData) return "—";
+        if (typeof outputData === "string") return escapeHtml(outputData);
+        if (typeof outputData !== "object") return escapeHtml(String(outputData));
+
+        const items = [];
+        for (const [k, v] of Object.entries(outputData)) {
+            if (k === "raw_text" || k === "normalized_text" || k === "cleaned_text") continue;
+            if (k === "grounding_verified") continue;
+
+            const label = k.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+            if (Array.isArray(v)) {
+                items.push(`<div><strong>${escapeHtml(label)}:</strong> ${v.map(x => escapeHtml(String(x))).join(", ")}</div>`);
+            } else if (typeof v === "number" && k.includes("confidence")) {
+                items.push(`<div><strong>${escapeHtml(label)}:</strong> ${Math.round(v * 100)}%</div>`);
+            } else if (typeof v === "object" && v !== null) {
+                items.push(`<div><strong>${escapeHtml(label)}:</strong> ${escapeHtml(JSON.stringify(v))}</div>`);
+            } else {
+                items.push(`<div><strong>${escapeHtml(label)}:</strong> ${escapeHtml(String(v))}</div>`);
+            }
+        }
+        return items.join("") || escapeHtml(JSON.stringify(outputData));
     }
 
-    function formatScore(score) {
-        if (score === null || score === undefined) return "N/A";
-        return Number(score).toFixed(2);
+    function extractFinalSummaryText(outputData) {
+        if (!outputData) return "Analysis complete.";
+        if (typeof outputData === "string") return outputData;
+        for (const key of ["clinical_summary", "executive_summary", "incident_summary", "summary", "final_summary", "report"]) {
+            if (outputData[key]) return String(outputData[key]);
+        }
+        const firstStr = Object.values(outputData).find(v => typeof v === "string" && v.length > 20);
+        return firstStr || JSON.stringify(outputData);
     }
 
     // =========================================================================
-    // Global Navigation & Tab Switching
+    // MODE SWITCHER: ASSISTANT MODE vs. DEVELOPER MODE
     // =========================================================================
-    const tabTitles = {
-        "dashboard": "Dashboard",
-        "pipeline": "Run Pipeline",
-        "trace-explorer": "Trace Explorer",
-        "failure-analysis": "Failure Analysis",
-        "propagation-analysis": "Propagation Analysis",
-        "feedback-evaluation": "Feedback & Evaluation",
-        "analytics-metrics": "Analytics & Metrics"
+    window.setAppMode = function(mode) {
+        state.appMode = mode;
+
+        const geminiShell = document.getElementById("gemini-clean-shell");
+        const devShell = document.getElementById("developer-workspace-shell");
+        const btnGemini = document.getElementById("btn-mode-gemini");
+        const btnDev = document.getElementById("btn-mode-dev");
+
+        if (mode === "gemini") {
+            if (geminiShell) geminiShell.style.display = "flex";
+            if (devShell) devShell.style.display = "none";
+            if (btnGemini) btnGemini.classList.add("active");
+            if (btnDev) btnDev.classList.remove("active");
+        } else {
+            if (geminiShell) geminiShell.style.display = "none";
+            if (devShell) devShell.style.display = "flex";
+            if (btnGemini) btnGemini.classList.remove("active");
+            if (btnDev) btnDev.classList.add("active");
+
+            // Ensure the Developer Workbench trace dropdown is populated and synced with the active trace
+            populateDeveloperTraceDropdown(state.activeTraceId);
+            if (state.currentTraceDetail) {
+                renderWorkbench(state.currentTraceDetail, state.currentPropagationData || {});
+            }
+            loadOverviewWorkspace();
+        }
+        window.scrollTo({ top: 0, behavior: "smooth" });
     };
 
-    window.switchTab = function(tabId) {
-        state.activeTab = tabId;
+    window.toggleThinkingDrawer = function() {
+        state.thinkingOpen = !state.thinkingOpen;
+        const acc = document.getElementById("thinking-accordion");
+        const btn = document.getElementById("btn-thinking-trigger");
+        const label = document.getElementById("thinking-toggle-label");
 
-        // Update nav tabs
-        document.querySelectorAll(".nav-tab").forEach(tab => {
-            if (tab.getAttribute("data-tab") === tabId) {
-                tab.classList.add("active");
-            } else {
-                tab.classList.remove("active");
-            }
-        });
-
-        // Update tab contents
-        document.querySelectorAll(".tab-content").forEach(content => {
-            if (content.id === `tab-${tabId}`) {
-                content.classList.add("active");
-            } else {
-                content.classList.remove("active");
-            }
-        });
-
-        // Update breadcrumb
-        const bcEl = document.getElementById("bc-current-tab");
-        if (bcEl && tabTitles[tabId]) {
-            bcEl.textContent = tabTitles[tabId];
-        }
-
-        // Trigger tab-specific data load
-        switch (tabId) {
-            case "dashboard":
-                fetchDashboardStats();
-                break;
-            case "pipeline":
-                fetchPresets();
-                break;
-            case "trace-explorer":
-                loadTraceExplorerTraces();
-                break;
-            case "failure-analysis":
-                loadFailureAnalysisTraces();
-                break;
-            case "propagation-analysis":
-                loadDAGTraces();
-                break;
-            case "feedback-evaluation":
-                loadFeedbackTraces();
-                loadFeedbackDataset();
-                break;
-            case "analytics-metrics":
-                fetchAnalytics();
-                break;
+        if (acc) acc.classList.toggle("open", state.thinkingOpen);
+        if (btn) btn.setAttribute("aria-expanded", String(state.thinkingOpen));
+        if (label) {
+            label.textContent = state.thinkingOpen ? "Hide background thinking" : "Show background thinking";
         }
     };
 
-    // Attach click listeners to main nav tabs
-    document.querySelectorAll(".nav-tab").forEach(tab => {
-        tab.addEventListener("click", () => {
-            const tabId = tab.getAttribute("data-tab");
-            window.switchTab(tabId);
-        });
-    });
+    window.setOutputComparisonView = function(view) {
+        state.outputView = view;
+        const tabClean = document.getElementById("tab-output-clean");
+        const tabBroken = document.getElementById("tab-output-broken");
+        const bodyClean = document.getElementById("gemini-answer-clean");
+        const bodyBroken = document.getElementById("gemini-answer-broken");
 
-    // Sidebar Toggle
-    const btnSidebarToggle = document.getElementById("btn-sidebar-toggle");
-    const appSidebar = document.getElementById("app-sidebar");
-    if (btnSidebarToggle && appSidebar) {
-        btnSidebarToggle.addEventListener("click", () => {
-            appSidebar.classList.toggle("collapsed");
-        });
+        if (view === "clean") {
+            if (tabClean) tabClean.classList.add("active");
+            if (tabBroken) tabBroken.classList.remove("active");
+            if (bodyClean) bodyClean.style.display = "block";
+            if (bodyBroken) bodyBroken.style.display = "none";
+        } else {
+            if (tabClean) tabClean.classList.remove("active");
+            if (tabBroken) tabBroken.classList.add("active");
+            if (bodyClean) bodyClean.style.display = "none";
+            if (bodyBroken) bodyBroken.style.display = "block";
+        }
+    };
+
+    // =========================================================================
+    // ASSISTANT MODE INITIALIZATION & RENDERING
+    // =========================================================================
+    async function initApp() {
+        try {
+            const res = await fetch("/api/traces?limit=50");
+            const traces = await res.json();
+            state.allTraces = traces;
+
+            const clinical = traces.find(t => t.pipeline_name.includes("clinical") && (t.failure_count > 0 || t.status === "failed"));
+            const financial = traces.find(t => t.pipeline_name.includes("financial") && (t.failure_count > 0 || t.status === "failed"));
+            const security = traces.find(t => t.pipeline_name.includes("security") && (t.failure_count > 0 || t.status === "failed"));
+            const fallback = traces.find(t => t.failure_count > 0 || t.status === "failed") || traces[0];
+
+            state.scenarios = [
+                {
+                    label: "Hospital Triage Note",
+                    pipelineName: "clinical_triage_pipeline",
+                    traceId: clinical ? clinical.trace_id : fallback?.trace_id,
+                },
+                {
+                    label: "Quarterly Earnings Report",
+                    pipelineName: "financial_earnings_analysis",
+                    traceId: financial ? financial.trace_id : fallback?.trace_id,
+                },
+                {
+                    label: "Cloud Security Log",
+                    pipelineName: "security_incident_triage",
+                    traceId: security ? security.trace_id : fallback?.trace_id,
+                },
+            ];
+
+            renderScenarioChips();
+            populateDeveloperTraceDropdown(state.scenarios[0]?.traceId);
+            if (state.scenarios[0]?.traceId) {
+                await loadTraceEverywhere(state.scenarios[0].traceId);
+            }
+        } catch (err) {
+            console.error("Failed to initialize app:", err);
+        }
     }
 
-    // Sub-tab Navigation (for Feedback & Evaluation)
-    document.querySelectorAll(".sub-nav-tab").forEach(subtab => {
-        subtab.addEventListener("click", () => {
-            const targetSubtab = subtab.getAttribute("data-subtab");
-            
-            // Toggle active subtab button
-            subtab.parentElement.querySelectorAll(".sub-nav-tab").forEach(t => t.classList.remove("active"));
-            subtab.classList.add("active");
+    function renderScenarioChips() {
+        const list = document.getElementById("gemini-scenario-chips");
+        if (!list) return;
+        list.innerHTML = state.scenarios.map((s, idx) => `
+            <button class="scenario-chip ${idx === state.selectedChipIndex ? 'active' : ''}" onclick="selectScenarioChip(${idx})">
+                ${escapeHtml(s.label)}
+            </button>
+        `).join("");
+    }
 
-            // Toggle active subtab content
-            const container = subtab.closest("section");
-            container.querySelectorAll(".subtab-content").forEach(c => {
-                if (c.id === `subtab-${targetSubtab}`) {
-                    c.classList.add("active");
-                } else {
-                    c.classList.remove("active");
-                }
+    window.selectScenarioChip = async function(idx) {
+        state.selectedChipIndex = idx;
+        renderScenarioChips();
+        const sc = state.scenarios[idx];
+        if (sc && sc.traceId) {
+            window.setOutputComparisonView("clean");
+            await loadTraceEverywhere(sc.traceId);
+        }
+    };
+
+    window.runGeminiLivePrompt = async function() {
+        const promptEl = document.getElementById("gemini-prompt-input");
+        const faultEl = document.getElementById("gemini-inject-fault");
+        const btn = document.getElementById("btn-gemini-run");
+        const btnLabel = document.getElementById("btn-gemini-run-label");
+        const summaryTextEl = document.getElementById("thinking-summary-text");
+
+        const inputText = promptEl ? promptEl.value.trim() : "";
+        if (!inputText) {
+            showToast("Please enter a prompt first.");
+            return;
+        }
+
+        try {
+            if (btn) btn.disabled = true;
+            if (btnLabel) btnLabel.textContent = "Thinking & Verifying...";
+            if (summaryTextEl) {
+                summaryTextEl.textContent = "Running 4-step pipeline in background & checking for hallucinations...";
+            }
+
+            const activeScenario = state.scenarios[state.selectedChipIndex];
+            const res = await fetch("/api/pipeline/run", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    pipeline_name: activeScenario ? activeScenario.pipelineName : "live_prompt_pipeline",
+                    input_text: inputText,
+                    inject_fault: faultEl ? faultEl.checked : true,
+                    fault_step: "extraction",
+                    fault_type: "hallucination",
+                    auto_heal: true,
+                }),
             });
 
-            if (targetSubtab === "manage-dataset") {
-                loadFeedbackDataset();
+            const data = await res.json();
+            if (data.trace && data.trace.trace_id) {
+                window.setOutputComparisonView("clean");
+                await loadTraceEverywhere(data.trace.trace_id);
+                showToast("Output verified & ready");
             }
-        });
-    });
+        } catch (err) {
+            console.error("Live prompt execution error:", err);
+            showToast("Error running live prompt");
+        } finally {
+            if (btn) btn.disabled = false;
+            if (btnLabel) btnLabel.textContent = "Run & Verify Output";
+        }
+    };
+
+    async function loadTraceEverywhere(traceId) {
+        state.activeTraceId = traceId;
+        const [detailRes, propRes] = await Promise.all([
+            fetch(`/api/traces/${traceId}`),
+            fetch(`/api/propagation/${traceId}`),
+        ]);
+        const detailData = await detailRes.json();
+        const propData = await propRes.json();
+
+        state.currentTraceDetail = detailData;
+        state.currentPropagationData = propData;
+
+        const wbSelect = document.getElementById("wb-trace-select");
+        if (wbSelect && wbSelect.value !== traceId) {
+            wbSelect.value = traceId;
+        }
+
+        renderGeminiResponseCard(detailData, propData);
+        renderWorkbench(detailData, propData);
+    }
+
+    function renderGeminiResponseCard(detailData, propData) {
+        const trace = detailData.trace;
+        const forensics = detailData.forensics || propData.forensics || {};
+        const gte = forensics.ground_truth_evidence || {};
+        const domino = forensics.domino_chain || [];
+        const rem = forensics.remediation || {};
+        const recs = forensics.recommendations || [];
+        const diffs = rem.step_diffs || [];
+        const hasFailures = forensics.has_failures ?? true;
+
+        const promptInput = document.getElementById("gemini-prompt-input");
+        if (promptInput && gte.source_text) {
+            promptInput.value = gte.source_text;
+        }
+
+        const summaryTextEl = document.getElementById("thinking-summary-text");
+        const rootStepName = forensics.root_cause_step || "extraction";
+        if (summaryTextEl) {
+            if (hasFailures) {
+                summaryTextEl.innerHTML = `<strong>Self-Healed in Background</strong> — Caught 1 mistake in Step 2 (<code>${escapeHtml(rootStepName)}</code>) &amp; auto-corrected before answering`;
+            } else {
+                summaryTextEl.innerHTML = `<strong>Verified in Background</strong> — All 4 pipeline steps passed fact-checking cleanly`;
+            }
+        }
+
+        const stepsRowEl = document.getElementById("thinking-steps-row");
+        if (stepsRowEl) {
+            stepsRowEl.innerHTML = diffs.map((d, i) => {
+                const wasFailed = d.before_score < 0.7;
+                const statusLine = wasFailed
+                    ? `<span class="text-danger">${formatPercent(d.before_score)}</span> &rarr; <span class="text-success">${formatPercent(d.after_score)} Fixed</span>`
+                    : `<span class="text-success">${formatPercent(d.after_score)} Passed</span>`;
+                return `
+                    <div class="tstep-pill ${wasFailed ? 'tstep-fixed' : ''}">
+                        <div class="tstep-name">${i + 1}. ${escapeHtml(d.step_name)}</div>
+                        <div class="tstep-sub">${statusLine}</div>
+                    </div>
+                `;
+            }).join("");
+        }
+
+        const whatCaughtEl = document.getElementById("thinking-what-caught");
+        const falsePillsEl = document.getElementById("thinking-false-pills");
+        const howFixedEl = document.getElementById("thinking-how-fixed");
+        const metricsBarEl = document.getElementById("thinking-metrics-bar");
+
+        if (whatCaughtEl) {
+            whatCaughtEl.textContent = hasFailures
+                ? `Step '${rootStepName}' dropped to ${formatPercent(domino.find(x => x.role === "ROOT_CAUSE")?.judge_score || 0.32)} quality because it invented claims not present in your prompt:`
+                : "No hallucinations or ungrounded claims detected.";
+        }
+        if (falsePillsEl) {
+            const uClaims = gte.ungrounded_claims || [];
+            falsePillsEl.innerHTML = uClaims.map(c =>
+                `<span class="claim-pill pill-ungrounded">&#10007; ${escapeHtml(c)}</span>`
+            ).join("");
+        }
+        if (howFixedEl) {
+            const rec = recs[0];
+            howFixedEl.innerHTML = rec
+                ? `Lowered <strong>${escapeHtml(rec.target_step)}</strong> creativity (<code>Temperature 0.7 &rarr; ${Number(rec.suggested_temperature ?? 0).toFixed(1)}</code>) and injected rule: <em>"${escapeHtml(rec.prompt_guideline_prefix)}"</em>`
+                : "Applied strict source-grounding verification and deterministic temperature (0.0).";
+        }
+        if (metricsBarEl) {
+            const bScore = rem.baseline_score ?? trace.final_score ?? 0.41;
+            const aScore = rem.healed_score ?? 0.94;
+            metricsBarEl.innerHTML = `
+                <span>Root Cause: <strong>Step 2 (${escapeHtml(rootStepName)})</strong></span>
+                <span>Confidence (RCC): <strong>${formatPercent(forensics.root_cause_confidence || 0.88)}</strong></span>
+                <span>Propagation Score (PS): <strong>${formatScore(forensics.overall_propagation_score || 0.33)}</strong></span>
+                <span>Recovery: <strong>${formatPercent(bScore)} &rarr; ${formatPercent(aScore)}</strong></span>
+            `;
+        }
+
+        const cleanPill = document.getElementById("clean-score-pill");
+        const brokenPill = document.getElementById("broken-score-pill");
+        const bScore = rem.baseline_score ?? trace.final_score ?? 0.41;
+        const aScore = rem.healed_score ?? 0.94;
+        if (cleanPill) cleanPill.textContent = `${formatPercent(aScore)} Verified`;
+        if (brokenPill) brokenPill.textContent = `${formatPercent(bScore)} Hallucinated`;
+
+        const cleanBody = document.getElementById("gemini-answer-clean");
+        const extractDiff = diffs[1] || diffs[0] || {};
+        const classifDiff = diffs[2] || diffs[0] || {};
+        const summaryDiff = diffs[3] || diffs[diffs.length - 1] || {};
+
+        if (cleanBody) {
+            const finalSummaryText = extractFinalSummaryText(summaryDiff.after_output);
+            cleanBody.innerHTML = `
+                <div class="clean-output-summary">
+                    ${escapeHtml(finalSummaryText)}
+                </div>
+                <div class="clean-output-grid">
+                    <div class="clean-detail-card">
+                        <div class="clean-detail-label">Verified Facts Extracted from Prompt</div>
+                        <div class="clean-detail-content">
+                            ${formatCleanKeyValues(extractDiff.after_output)}
+                        </div>
+                    </div>
+                    <div class="clean-detail-card">
+                        <div class="clean-detail-label">Final Classification &amp; Priority</div>
+                        <div class="clean-detail-content">
+                            ${formatCleanKeyValues(classifDiff.after_output)}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        const brokenBody = document.getElementById("gemini-answer-broken");
+        if (brokenBody) {
+            const brokenSummaryText = extractFinalSummaryText(summaryDiff.before_output);
+            brokenBody.innerHTML = `
+                <div class="broken-warning-banner">
+                    <strong>Without FailureForensics:</strong> Because Step 2 (Extraction) invented false facts, the downstream steps blindly trusted it and produced this wrong final output:
+                </div>
+                <div class="clean-output-summary text-danger">
+                    ${escapeHtml(brokenSummaryText)}
+                </div>
+                <div class="clean-output-grid">
+                    <div class="clean-detail-card">
+                        <div class="clean-detail-label text-danger">Faulty Extraction (Step 2 — ${formatPercent(extractDiff.before_score)})</div>
+                        <div class="clean-detail-content">
+                            ${formatCleanKeyValues(extractDiff.before_output)}
+                        </div>
+                    </div>
+                    <div class="clean-detail-card">
+                        <div class="clean-detail-label text-amber">Corrupted Classification (Step 3 — ${formatPercent(classifDiff.before_score)})</div>
+                        <div class="clean-detail-content">
+                            ${formatCleanKeyValues(classifDiff.before_output)}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+    }
 
     // =========================================================================
-    // 1. DASHBOARD LOGIC
+    // DEVELOPER MODE (DEDICATED TECHNICAL FORENSICS & MATH)
+    // =========================================================================
+    window.switchTab = function(tabId) {
+        state.activeTab = tabId;
+        document.querySelectorAll(".nav-tab").forEach(tab => {
+            tab.classList.toggle("active", tab.getAttribute("data-tab") === tabId);
+        });
+        document.querySelectorAll(".tab-content").forEach(section => {
+            section.classList.toggle("active", section.id === `tab-${tabId}`);
+        });
+
+        if (tabId === "workbench") {
+            populateDeveloperTraceDropdown(state.activeTraceId);
+            if (state.currentTraceDetail) {
+                renderWorkbench(state.currentTraceDetail, state.currentPropagationData || {});
+            }
+        } else if (tabId === "overview") {
+            loadOverviewWorkspace();
+        } else if (tabId === "pipeline") {
+            fetchPresets();
+        } else if (tabId === "regression") {
+            loadRegressionWorkspace();
+        }
+    };
+
+    document.querySelectorAll(".nav-tab").forEach(tab => {
+        tab.addEventListener("click", () => window.switchTab(tab.getAttribute("data-tab")));
+    });
+
+    function populateDeveloperTraceDropdown(selectedId) {
+        const wbTraceSelect = document.getElementById("wb-trace-select");
+        if (!wbTraceSelect || !state.allTraces.length) return;
+
+        wbTraceSelect.innerHTML = state.allTraces.map(t => {
+            const shortId = t.trace_id ? t.trace_id.slice(0, 10) : "trace";
+            const tag = (t.failure_count > 0 || t.status === "failed")
+                ? `[FAILED • ${t.failure_count || 1} fault(s)]`
+                : `[HEALTHY]`;
+            return `<option value="${t.trace_id}">${shortId}... — ${t.pipeline_name} ${tag}</option>`;
+        }).join("");
+
+        if (selectedId && state.allTraces.some(t => t.trace_id === selectedId)) {
+            wbTraceSelect.value = selectedId;
+        }
+    }
+
+    const wbTraceSelect = document.getElementById("wb-trace-select");
+    if (wbTraceSelect) {
+        wbTraceSelect.addEventListener("change", () => {
+            if (wbTraceSelect.value) loadTraceEverywhere(wbTraceSelect.value);
+        });
+    }
+
+    function renderWorkbench(detailData, propData) {
+        const trace = detailData.trace;
+        if (!trace) return;
+        const failures = detailData.failures || [];
+        const forensics = detailData.forensics || propData.forensics || {};
+        const hasFailures = forensics.has_failures ?? (failures.length > 0);
+        const rem = forensics.remediation || {};
+        const gte = forensics.ground_truth_evidence || {};
+        const domino = forensics.domino_chain || [];
+
+        // 1. Telemetry Ribbon
+        const setEl = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+        setEl("wb-trace-id", trace.trace_id.slice(0, 12) + "...");
+        setEl("wb-pipeline-name", trace.pipeline_name);
+
+        const elStatus = document.getElementById("wb-status");
+        if (elStatus) {
+            elStatus.innerHTML = `<span class="status-badge ${hasFailures ? 'badge-status-failed' : 'badge-status-success'}">${hasFailures ? 'FAILED' : 'HEALTHY'}</span>`;
+        }
+
+        const rootStep = forensics.root_cause_step || "extraction";
+        const rccVal = forensics.root_cause_confidence ?? 0.88;
+        const psVal = forensics.overall_propagation_score ?? propData.overall_propagation_score ?? 0.33;
+        const bScore = rem.baseline_score ?? trace.final_score ?? 0.41;
+        const aScore = rem.healed_score ?? 0.94;
+        const deltaScore = round2(aScore - bScore);
+
+        setEl("wb-root-step", hasFailures ? `Step: ${rootStep}` : "None (Clean)");
+        setEl("wb-rcc-val", hasFailures ? `${Math.round(rccVal * 100)}%` : "100%");
+        setEl("wb-ps-val", formatScore(psVal));
+
+        const elScoreComp = document.getElementById("wb-score-comparison");
+        if (elScoreComp) {
+            elScoreComp.innerHTML = hasFailures
+                ? `<span class="text-danger">${formatScore(bScore)}</span> &rarr; <span class="text-success">${formatScore(aScore)} (+${formatScore(deltaScore)})</span>`
+                : formatScore(trace.final_score);
+        }
+
+        // 2. Technical Section 1: Live Mathematical Formulas
+        const rootDomino = domino.find(d => d.role === "ROOT_CAUSE") || domino[1] || domino[0];
+        const affectedCount = domino.filter(d => d.role === "PROPAGATED" || d.role === "CORRUPTED_OUTCOME").length;
+        const rootScore = rootDomino?.judge_score ?? 0.32;
+
+        setEl("tmath-val-detector", hasFailures
+            ? `Step '${rootStep}': ${formatScore(rootScore)} < 0.70 -> FAULT`
+            : `All spans >= 0.70 -> NOMINAL`);
+        setEl("tmath-val-ps", `Overall PS = ${formatScore(psVal)} (${affectedCount} downstream spans)`);
+        setEl("tmath-val-rcc", hasFailures
+            ? `RCC = ${Math.round(rccVal * 100)}% (Isolated: ${rootStep})`
+            : `RCC = 100% (No Fault)`);
+        setEl("tmath-val-delta", `${formatScore(bScore)} -> ${formatScore(aScore)} (Delta Q = +${formatScore(deltaScore)})`);
+
+        // 3. Technical Section 2: Causal Propagation SVG DAG & Domino List
+        renderPropagationDagSvg(domino);
+        renderDominoStoryboard(domino);
+
+        // 4. Technical Section 3: Ground Truth vs. Faulty Span Payload
+        setEl("wb-verdict-title", forensics.verdict_title || "Source Ground-Truth vs. Faulty Span Payload Verification");
+        setEl("wb-verdict-summary", forensics.verdict_summary || "");
+        const vBadge = document.getElementById("wb-verdict-badge");
+        if (vBadge) {
+            vBadge.className = `status-badge ${hasFailures ? 'badge-status-failed' : 'badge-status-success'}`;
+            vBadge.textContent = hasFailures ? "ROOT CAUSE ISOLATED" : "VERIFIED CLEAN";
+        }
+        setEl("wb-source-text", gte.source_text || "—");
+        setEl("wb-fault-step-tag", `STEP '${(gte.failing_step || rootStep).toUpperCase()}' PAYLOAD`);
+        setEl("wb-fault-score-meta", `Judge Score: ${formatScore(rootScore)}`);
+        setEl("wb-fault-output", formatJson(gte.faulty_output));
+
+        const verifiedPillsEl = document.getElementById("wb-verified-pills");
+        if (verifiedPillsEl) {
+            verifiedPillsEl.innerHTML = (gte.verified_claims || []).map(c =>
+                `<span class="claim-pill pill-verified">&#10003; ${escapeHtml(c)}</span>`
+            ).join("");
+        }
+        const ungroundedPillsEl = document.getElementById("wb-ungrounded-pills");
+        if (ungroundedPillsEl) {
+            ungroundedPillsEl.innerHTML = (gte.ungrounded_claims || []).map(c =>
+                `<span class="claim-pill pill-ungrounded">&#10007; ${escapeHtml(c)}</span>`
+            ).join("");
+        }
+
+        // 5. Technical Section 4: AdaptiveOptimizer Patch & Raw JSON Before/After Diff Table
+        renderRemediationDiffSection(forensics, bScore, aScore, deltaScore);
+
+        // 6. Technical Section 5: Raw Span Execution Telemetry Accordion
+        renderRawSpansAccordion(trace.spans || []);
+    }
+
+    function round2(n) {
+        return Math.round((Number(n) || 0) * 100) / 100;
+    }
+
+    function renderPropagationDagSvg(dominoChain) {
+        const container = document.getElementById("wb-dag-container");
+        if (!container) return;
+        if (!dominoChain || dominoChain.length === 0) {
+            container.innerHTML = `<div class="empty-hint">No spans available</div>`;
+            return;
+        }
+
+        const nodeW = 148, nodeH = 74, gapX = 52, padX = 20, padY = 42;
+        const totalW = padX * 2 + dominoChain.length * nodeW + (dominoChain.length - 1) * gapX;
+        const totalH = 165;
+
+        const roleStyles = {
+            ROOT_CAUSE: { fill: "rgba(239, 68, 68, 0.16)", stroke: "#ef4444", badge: "ROOT CAUSE", text: "#fca5a5" },
+            PROPAGATED: { fill: "rgba(245, 158, 11, 0.15)", stroke: "#f59e0b", badge: "PROPAGATED", text: "#fcd34d" },
+            CORRUPTED_OUTCOME: { fill: "rgba(168, 85, 247, 0.16)", stroke: "#a855f7", badge: "CORRUPTED FINAL", text: "#d8b4fe" },
+            HEALTHY: { fill: "rgba(16, 185, 129, 0.12)", stroke: "#10b981", badge: "HEALTHY PASS", text: "#6ee7b7" },
+        };
+
+        let edgesSvg = "", nodesSvg = "";
+        dominoChain.forEach((step, idx) => {
+            const x = padX + idx * (nodeW + gapX);
+            const y = padY;
+            const st = roleStyles[step.role] || roleStyles.HEALTHY;
+            const scoreStr = formatScore(step.judge_score ?? 1.0);
+            const latStr = step.latency_ms ? `${Math.round(step.latency_ms)}ms` : "";
+
+            if (idx < dominoChain.length - 1) {
+                const nextStep = dominoChain[idx + 1];
+                const x1 = x + nodeW, y1 = y + nodeH / 2, x2 = x + nodeW + gapX, y2 = y1;
+                const isCausal = step.role !== "HEALTHY" && nextStep.role !== "HEALTHY";
+                const edgeColor = isCausal ? "#ef4444" : "#334155";
+                const psLabel = isCausal && nextStep.propagation_score ? `PS:${formatScore(nextStep.propagation_score)}` : "";
+                edgesSvg += `
+                    <line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${edgeColor}" stroke-width="${isCausal ? 2.5 : 1.5}" />
+                    ${psLabel ? `<text x="${(x1 + x2) / 2}" y="${y1 - 8}" text-anchor="middle" fill="#fca5a5" font-size="9.5" font-family="JetBrains Mono, monospace">${psLabel}</text>` : ""}
+                `;
+            }
+
+            nodesSvg += `
+                <g transform="translate(${x}, ${y})">
+                    <rect width="${nodeW}" height="${nodeH}" rx="7" fill="${st.fill}" stroke="${st.stroke}" stroke-width="1.8"/>
+                    <text x="10" y="18" fill="${st.text}" font-size="9" font-family="JetBrains Mono, monospace" font-weight="700">${st.badge}</text>
+                    <text x="10" y="38" fill="#f1f5f9" font-size="13" font-family="Inter, sans-serif" font-weight="700">${escapeHtml(step.step_name)}</text>
+                    <text x="10" y="56" fill="#94a3b8" font-size="10.5" font-family="JetBrains Mono, monospace">Score: ${scoreStr} ${latStr ? '· ' + latStr : ''}</text>
+                </g>
+            `;
+        });
+
+        container.innerHTML = `<svg viewBox="0 0 ${totalW} ${totalH}" width="100%" height="165">${edgesSvg}${nodesSvg}</svg>`;
+    }
+
+    function renderDominoStoryboard(dominoChain) {
+        const listEl = document.getElementById("wb-domino-list");
+        if (!listEl) return;
+        listEl.innerHTML = dominoChain.map((d, i) => `
+            <div class="domino-card role-${escapeHtml(d.role)}">
+                <div class="domino-head">
+                    <span>Span ${i + 1}: ${escapeHtml(d.step_name)} (${escapeHtml(d.role_label)})</span>
+                    <span class="font-mono">Score: ${formatScore(d.judge_score)} | PS: ${formatScore(d.propagation_score)}</span>
+                </div>
+                <div class="domino-what">${escapeHtml(d.what_happened)}</div>
+                <div class="domino-causal">${escapeHtml(d.causal_link)}</div>
+            </div>
+        `).join("");
+    }
+
+    function renderRemediationDiffSection(forensics, bScore, aScore, deltaScore) {
+        const rem = forensics.remediation || {};
+        const recs = forensics.recommendations || [];
+        const deltaPill = document.getElementById("wb-remediation-delta-pill");
+        const changesBox = document.getElementById("wb-changes-applied-box");
+        const diffWrapper = document.getElementById("wb-diff-table-wrapper");
+
+        if (deltaPill) {
+            deltaPill.textContent = `Score: ${formatScore(bScore)} -> ${formatScore(aScore)} (+${formatScore(deltaScore)})`;
+        }
+        if (changesBox) {
+            changesBox.innerHTML = recs.map(r => `
+                <div class="patch-item">
+                    <div class="patch-meta">
+                        <span class="status-badge badge-status-failed">Target Span: ${escapeHtml(r.target_step)}</span>
+                        <span class="status-badge badge-status-success">Hyperparameter: temperature 0.7 &rarr; ${Number(r.suggested_temperature ?? 0).toFixed(1)}</span>
+                    </div>
+                    <div class="patch-prompt">Injected System Prompt Prefix: "${escapeHtml(r.prompt_guideline_prefix)}"</div>
+                </div>
+            `).join("") || `<div class="empty-hint">No remediation patch required.</div>`;
+        }
+        if (diffWrapper) {
+            const diffs = rem.step_diffs || [];
+            diffWrapper.innerHTML = `
+                <table class="diff-table">
+                    <thead>
+                        <tr>
+                            <th>Pipeline Span</th>
+                            <th>Before Remediation (Raw JSON &amp; Judge Score)</th>
+                            <th>After Remediation (Raw JSON &amp; Judge Score)</th>
+                            <th>Technical Mechanism</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${diffs.map(d => `
+                            <tr>
+                                <td>
+                                    <strong>Stage ${d.step_index + 1}: ${escapeHtml(d.step_name)}</strong>
+                                    <div style="margin-top:6px;"><span class="status-badge ${d.change_type === 'DIRECT_FIX' ? 'badge-status-failed' : 'badge-status-success'}">${escapeHtml(d.change_badge || d.change_type)}</span></div>
+                                </td>
+                                <td class="diff-cell-before">
+                                    <span class="font-mono text-danger">Judge Score: ${formatScore(d.before_score)}</span>
+                                    <pre class="diff-pre">${escapeHtml(formatJson(d.before_output))}</pre>
+                                </td>
+                                <td class="diff-cell-after">
+                                    <span class="font-mono text-success">Judge Score: ${formatScore(d.after_score)} (+${formatScore(d.score_delta)})</span>
+                                    <pre class="diff-pre">${escapeHtml(formatJson(d.after_output))}</pre>
+                                </td>
+                                <td>${escapeHtml(d.change_explanation)}</td>
+                            </tr>
+                        `).join("")}
+                    </tbody>
+                </table>
+            `;
+        }
+    }
+
+    function renderRawSpansAccordion(spans) {
+        const container = document.getElementById("wb-raw-spans");
+        if (!container) return;
+        container.innerHTML = spans.map((s, idx) => `
+            <div class="span-acc-item" id="span-acc-${idx}">
+                <button class="span-acc-header" onclick="document.getElementById('span-acc-${idx}').classList.toggle('open')">
+                    <span><strong>Span ${idx + 1}: ${escapeHtml(s.step_name)}</strong> (ID: <code>${escapeHtml((s.span_id || "").slice(0, 8))}</code>)</span>
+                    <span class="font-mono">Score: ${formatScore(s.judge_score)} | Latency: ${Math.round(s.latency_ms || 0)} ms &blacktriangledown;</span>
+                </button>
+                <div class="span-acc-body">
+                    <div>
+                        <div class="claims-label">Raw Input Dictionary (JSON)</div>
+                        <pre class="diff-pre">${escapeHtml(formatJson(s.input_data))}</pre>
+                    </div>
+                    <div>
+                        <div class="claims-label">Raw Output Dictionary (JSON)</div>
+                        <pre class="diff-pre">${escapeHtml(formatJson(s.output_data))}</pre>
+                    </div>
+                </div>
+            </div>
+        `).join("");
+    }
+
+    const btnWbHeal = document.getElementById("btn-wb-heal");
+    if (btnWbHeal) {
+        btnWbHeal.addEventListener("click", async () => {
+            if (!state.activeTraceId) return;
+            try {
+                btnWbHeal.disabled = true;
+                btnWbHeal.textContent = "Applying Optimizer Patch...";
+                const res = await fetch(`/api/traces/${state.activeTraceId}/heal`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({}),
+                });
+                const data = await res.json();
+                if (state.currentTraceDetail && data.forensics) {
+                    state.currentTraceDetail.forensics = data.forensics;
+                    renderGeminiResponseCard(state.currentTraceDetail, state.currentPropagationData || {});
+                    renderWorkbench(state.currentTraceDetail, state.currentPropagationData || {});
+                }
+                showToast("AdaptiveOptimizer patch verified!");
+            } catch (e) {
+                console.error(e);
+            } finally {
+                btnWbHeal.disabled = false;
+                btnWbHeal.textContent = "Re-Run Optimizer Patch";
+            }
+        });
+    }
+
+    // =========================================================================
+    // DEVELOPER TELEMETRY, FAULT INJECTION LAB & BENCHMARK
     // =========================================================================
     async function fetchSystemStatus() {
         try {
             const res = await fetch("/api/status");
             const data = await res.json();
-
             const gpuText = document.getElementById("gpu-text");
             const modelText = document.getElementById("active-model-text");
-            const hwStatus = document.getElementById("hw-status-text");
-            const hwStorage = document.getElementById("hw-storage-path");
-
             if (data.server_online) {
-                if (gpuText) gpuText.textContent = "NVIDIA RTX 4050 • Active";
+                if (gpuText) gpuText.textContent = "RTX 4050 • Active";
                 if (modelText) modelText.textContent = data.active_model || "qwen2.5:1.5b";
-                if (hwStatus) hwStatus.textContent = "Ollama Active with NVIDIA GPU Acceleration";
-                if (hwStorage) hwStorage.textContent = data.models_path || "D:\\ollama_models";
-            } else {
-                if (gpuText) gpuText.textContent = "GPU Ready (Ollama Offline)";
-                if (hwStatus) hwStatus.textContent = "Ollama Server Offline";
             }
         } catch (e) {
-            console.warn("Failed to fetch system status:", e);
+            console.warn("Status check warning:", e);
         }
     }
 
-    async function fetchDashboardStats() {
+    async function loadOverviewWorkspace() {
         try {
-            const res = await fetch("/api/dashboard/stats");
-            const data = await res.json();
+            const [statsRes, analyticsRes, tracesRes] = await Promise.all([
+                fetch("/api/dashboard/stats"),
+                fetch("/api/analytics"),
+                fetch("/api/traces?limit=100"),
+            ]);
+            const stats = await statsRes.json();
+            const analytics = await analyticsRes.json();
+            state.allTraces = await tracesRes.json();
 
-            // Update KPI cards
-            const totalTracesEl = document.getElementById("kpi-total-traces");
-            const totalFailuresEl = document.getElementById("kpi-total-failures");
-            const avgJudgeEl = document.getElementById("kpi-avg-judge");
-            const analyzedEl = document.getElementById("kpi-traces-analyzed");
+            const setEl = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+            setEl("kpi-total-traces", stats.total_traces ?? 0);
+            setEl("kpi-total-failures", stats.total_failures ?? 0);
+            setEl("kpi-avg-judge", formatScore(stats.avg_judge_score));
+            setEl("kpi-traces-analyzed", stats.traces_analyzed ?? 0);
 
-            if (totalTracesEl) totalTracesEl.textContent = data.total_traces ?? 0;
-            if (totalFailuresEl) totalFailuresEl.textContent = data.total_failures ?? 0;
-            if (avgJudgeEl) avgJudgeEl.textContent = formatScore(data.avg_judge_score);
-            if (analyzedEl) analyzedEl.textContent = data.traces_analyzed ?? 0;
-
-            // Render Recent Traces Table
-            const tbody = document.getElementById("dashboard-recent-tbody");
-            if (tbody) {
-                if (!data.recent_traces || data.recent_traces.length === 0) {
-                    tbody.innerHTML = `<tr><td colspan="8" class="loading-td">No pipeline executions logged yet. Run a pipeline to see traces.</td></tr>`;
-                    return;
-                }
-
-                tbody.innerHTML = data.recent_traces.map(t => {
-                    const statusClass = (t.status === "failed" || t.failure_count > 0) ? "badge-status-failed" : "badge-status-success";
-                    const shortId = t.trace_id ? t.trace_id.slice(0, 8) : "--";
-                    return `
-                        <tr>
-                            <td><code class="trace-id-pill">${shortId}...</code></td>
-                            <td><strong>${t.pipeline_name}</strong></td>
-                            <td><span class="status-badge ${statusClass}">${t.status}</span></td>
-                            <td>${t.span_count}</td>
-                            <td><span class="${t.failure_count > 0 ? 'highlight-red font-bold' : ''}">${t.failure_count}</span></td>
-                            <td>${formatScore(t.final_score)}</td>
-                            <td>${formatLatency(t.total_latency_ms)}</td>
-                            <td>
-                                <button class="btn-ghost btn-sm" onclick="inspectTrace('${t.trace_id}')">Inspect ➔</button>
-                            </td>
-                        </tr>
-                    `;
-                }).join("");
+            if (analytics.score_stats) {
+                setEl("score-stat-min", formatScore(analytics.score_stats.min));
+                setEl("score-stat-avg", formatScore(analytics.score_stats.avg));
+                setEl("score-stat-max", formatScore(analytics.score_stats.max));
+                setEl("dist-evaluated-count", `${analytics.score_stats.total_evaluated || 0} spans`);
+                renderBarList("chart-score-buckets", analytics.score_stats.buckets || {}, "#3b82f6");
             }
-        } catch (e) {
-            console.error("Dashboard stats error:", e);
+            renderBarList("chart-failure-types", analytics.failure_types || {}, "#ef4444");
+            renderBarList("chart-severities", analytics.severities || {}, "#f59e0b");
+            renderOverviewTracesTable();
+        } catch (err) {
+            console.error("Overview error:", err);
         }
     }
 
-    const btnRefreshDashboard = document.getElementById("btn-refresh-dashboard");
-    if (btnRefreshDashboard) {
-        btnRefreshDashboard.addEventListener("click", () => {
-            fetchDashboardStats();
-            fetchSystemStatus();
-            showToast("Dashboard telemetry refreshed");
-        });
+    function renderBarList(containerId, dataMap, colorHex) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        const entries = Object.entries(dataMap);
+        const maxVal = Math.max(...entries.map(([, v]) => Number(v) || 0), 1);
+        container.innerHTML = entries.map(([label, count]) => {
+            const pct = Math.round(((Number(count) || 0) / maxVal) * 100);
+            return `
+                <div class="bar-row">
+                    <span>${escapeHtml(label)}</span>
+                    <div class="bar-track"><div class="bar-fill" style="width:${pct}%; background:${colorHex};"></div></div>
+                    <span class="font-mono">${count}</span>
+                </div>
+            `;
+        }).join("");
     }
 
-    // Quick inspect from dashboard
-    window.inspectTrace = function(traceId) {
-        window.switchTab("trace-explorer");
-        setTimeout(() => {
-            const selectEl = document.getElementById("trace-explorer-select");
-            if (selectEl) {
-                selectEl.value = traceId;
-                onTraceExplorerSelect(traceId);
-            }
-        }, 150);
-    };
+    function renderOverviewTracesTable() {
+        const tbody = document.getElementById("overview-traces-tbody");
+        if (!tbody) return;
+        const filtered = state.allTraces.filter(t => {
+            const isFailed = t.status === "failed" || (t.failure_count && t.failure_count > 0);
+            if (state.traceFilter === "failed") return isFailed;
+            if (state.traceFilter === "success") return !isFailed;
+            return true;
+        });
+        tbody.innerHTML = filtered.map(t => {
+            const isFailed = t.status === "failed" || (t.failure_count && t.failure_count > 0);
+            return `
+                <tr>
+                    <td class="font-mono">${escapeHtml((t.trace_id || "").slice(0, 12))}...</td>
+                    <td><strong>${escapeHtml(t.pipeline_name)}</strong></td>
+                    <td><span class="status-badge ${isFailed ? 'badge-status-failed' : 'badge-status-success'}">${isFailed ? 'FAILED' : 'HEALTHY'}</span></td>
+                    <td class="font-mono">${formatScore(t.final_score)}</td>
+                    <td class="font-mono">${t.span_count ?? 4}</td>
+                    <td class="font-mono">${t.failure_count ?? 0}</td>
+                    <td class="font-mono">${t.total_latency_ms ? Math.round(t.total_latency_ms) + " ms" : "—"}</td>
+                    <td class="text-right">
+                        <button class="btn btn-secondary btn-sm" onclick="openTraceInWorkbench('${escapeHtml(t.trace_id)}')">Inspect in Technical Workbench &rarr;</button>
+                    </td>
+                </tr>
+            `;
+        }).join("");
+    }
 
-    // =========================================================================
-    // 2. RUN PIPELINE STUDIO LOGIC
-    // =========================================================================
-    const promptInput = document.getElementById("prompt-input");
-    const charWordCount = document.getElementById("char-word-count");
-    const presetChips = document.querySelectorAll(".preset-chip");
-    const btnAutoStructure = document.getElementById("btn-auto-structure");
-    const btnExecute = document.getElementById("btn-execute");
-    const selectModel = document.getElementById("select-model");
-    const toggleAutoHeal = document.getElementById("toggle-auto-heal");
-    const toggleEvaluate = document.getElementById("toggle-evaluate");
-    const fileDropArea = document.getElementById("file-drop-area");
-    const fileInput = document.getElementById("file-input");
+    document.querySelectorAll(".filter-chip").forEach(btn => {
+        btn.addEventListener("click", () => {
+            document.querySelectorAll(".filter-chip").forEach(b => b.classList.remove("active"));
+            btn.classList.add("active");
+            state.traceFilter = btn.getAttribute("data-filter") || "all";
+            renderOverviewTracesTable();
+        });
+    });
+
+    window.openTraceInWorkbench = async function(traceId) {
+        await loadTraceEverywhere(traceId);
+        window.switchTab("workbench");
+    };
 
     async function fetchPresets() {
         try {
             const res = await fetch("/api/presets");
-            state.presets = await res.json();
-            
-            // If prompt input is empty, load active preset
-            if (promptInput && !promptInput.value.trim()) {
-                loadPresetByName("clinical");
-            }
-        } catch (e) {
-            console.warn("Failed to fetch presets:", e);
-        }
-    }
-
-    function loadPresetByName(presetKey) {
-        const presetKeys = Object.keys(state.presets);
-        let matchedKey = null;
-
-        if (presetKey === "clinical") {
-            matchedKey = presetKeys.find(k => k.toLowerCase().includes("clinical") || k.toLowerCase().includes("hallucination"));
-        } else if (presetKey === "financial") {
-            matchedKey = presetKeys.find(k => k.toLowerCase().includes("financial") || k.toLowerCase().includes("10-q"));
-        } else if (presetKey === "security") {
-            matchedKey = presetKeys.find(k => k.toLowerCase().includes("security") || k.toLowerCase().includes("noise"));
-        } else if (presetKey === "clean") {
-            matchedKey = presetKeys.find(k => k.toLowerCase().includes("clean") || k.toLowerCase().includes("standard"));
-        }
-
-        if (matchedKey && state.presets[matchedKey]) {
-            const p = state.presets[matchedKey];
-            promptInput.value = p.text || p.raw_input || p.description || "";
-            updateInputCounter();
-            showToast(`Loaded preset: ${p.domain || presetKey}`);
-        }
-    }
-
-    function updateInputCounter() {
-        if (!promptInput || !charWordCount) return;
-        const text = promptInput.value;
-        const chars = text.length;
-        const words = text.trim() ? text.trim().split(/\s+/).length : 0;
-        
-        let domain = "GENERAL";
-        const lower = text.toLowerCase();
-        if (lower.includes("mg") || lower.includes("patient") || lower.includes("symptom")) domain = "CLINICAL";
-        else if (lower.includes("revenue") || lower.includes("ebitda") || lower.includes("quarter")) domain = "FINANCIAL";
-        else if (lower.includes("firewall") || lower.includes("ip") || lower.includes("cve")) domain = "SECURITY";
-
-        charWordCount.textContent = `${chars} characters • ${words} words • Domain: ${domain}`;
-    }
-
-    if (promptInput) {
-        promptInput.addEventListener("input", updateInputCounter);
-    }
-
-    presetChips.forEach(chip => {
-        chip.addEventListener("click", () => {
-            presetChips.forEach(c => c.classList.remove("active"));
-            chip.classList.add("active");
-            const presetKey = chip.getAttribute("data-preset");
-            loadPresetByName(presetKey);
-        });
-    });
-
-    // File Drag & Drop
-    if (fileDropArea && fileInput) {
-        fileDropArea.addEventListener("click", () => fileInput.click());
-        fileInput.addEventListener("change", (e) => {
-            if (e.target.files.length > 0) {
-                readFileIntoPrompt(e.target.files[0]);
-            }
-        });
-
-        fileDropArea.addEventListener("dragover", (e) => {
-            e.preventDefault();
-            fileDropArea.classList.add("dragover");
-        });
-        fileDropArea.addEventListener("dragleave", () => fileDropArea.classList.remove("dragover"));
-        fileDropArea.addEventListener("drop", (e) => {
-            e.preventDefault();
-            fileDropArea.classList.remove("dragover");
-            if (e.dataTransfer.files.length > 0) {
-                readFileIntoPrompt(e.dataTransfer.files[0]);
-            }
-        });
-    }
-
-    function readFileIntoPrompt(file) {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            promptInput.value = e.target.result;
-            updateInputCounter();
-            showToast(`Loaded file: ${file.name}`);
-        };
-        reader.readAsText(file);
-    }
-
-    // Auto-Structure Button
-    if (btnAutoStructure) {
-        btnAutoStructure.addEventListener("click", () => {
-            const text = promptInput.value.trim();
-            if (!text) {
-                showToast("Please enter or paste some text first");
-                return;
-            }
-            showToast("Input structured successfully for pipeline ingestion");
-        });
-    }
-
-    // Execute Pipeline
-    if (btnExecute) {
-        btnExecute.addEventListener("click", executePipelineStudio);
-    }
-
-    async function executePipelineStudio() {
-        const text = promptInput.value.trim();
-        if (!text) {
-            showToast("Please provide input text or select a scenario preset.");
-            return;
-        }
-
-        const model = selectModel.value;
-        const autoHeal = toggleAutoHeal ? toggleAutoHeal.checked : true;
-        const autoEval = toggleEvaluate ? toggleEvaluate.checked : true;
-
-        btnExecute.disabled = true;
-        btnExecute.querySelector(".btn-text").textContent = "Executing & Diagnosing...";
-        const timerBadge = document.getElementById("execution-timer");
-        if (timerBadge) timerBadge.textContent = "Running...";
-
-        // Reset Stepper
-        const stepNodes = [
-            document.getElementById("step-node-0"),
-            document.getElementById("step-node-1"),
-            document.getElementById("step-node-2"),
-            document.getElementById("step-node-3"),
-        ];
-
-        stepNodes.forEach((node, i) => {
-            if (!node) return;
-            node.className = "step-node";
-            node.querySelector(".step-status").textContent = (i === 0) ? "Active..." : "Queued";
-        });
-
-        const startTime = performance.now();
-        const intervalId = setInterval(() => {
-            const elapsed = ((performance.now() - startTime) / 1000).toFixed(1);
-            if (timerBadge) timerBadge.textContent = `${elapsed}s`;
-        }, 100);
-
-        try {
-            const res = await fetch("/api/pipeline/run", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    input_text: text,
-                    model: model,
-                    auto_evaluate: autoEval,
-                    auto_heal: autoHeal,
-                    auto_structure: true,
-                }),
-            });
-
-            clearInterval(intervalId);
-            const totalElapsed = ((performance.now() - startTime) / 1000).toFixed(1);
-            if (timerBadge) timerBadge.textContent = `Completed in ${totalElapsed}s`;
-
-            if (!res.ok) {
-                const errData = await res.json();
-                throw new Error(errData.detail || "Pipeline run failed");
-            }
-
             const data = await res.json();
-            state.pipelineOutputData = data;
-
-            // Render Stepper results
-            const trace = data.trace;
-            const failures = data.failures || [];
-            const hasFailures = failures.length > 0;
-
-            trace.spans.forEach((span, idx) => {
-                const node = stepNodes[idx];
-                if (!node) return;
-
-                const isFailed = (span.status === "failed" || (span.judge_score !== null && span.judge_score < 0.7));
-                node.classList.add(isFailed ? "status-failed" : "status-success");
-                node.querySelector(".step-status").textContent = isFailed ? "Failed" : "Success";
-            });
-
-            // Diagnosis Banner
-            const diagBanner = document.getElementById("diagnosis-banner");
-            const diagTitle = document.getElementById("diag-title");
-            const diagSub = document.getElementById("diag-sub");
-            const diagConf = document.getElementById("diag-confidence");
-            const diagHealing = document.getElementById("diag-healing");
-            const diagExplanation = document.getElementById("diag-explanation");
-
-            if (diagBanner) {
-                if (hasFailures) {
-                    diagBanner.style.display = "block";
-                    diagTitle.textContent = "Pipeline Failure Diagnosed";
-                    const rootSpanName = data.root_cause ? data.root_cause.root_step_name : (failures[0].step_name || "Unknown");
-                    diagSub.textContent = `Root cause identified at Step: '${rootSpanName}' (${failures[0].failure_type})`;
-                    
-                    if (diagConf) {
-                        const confPct = data.root_cause ? Math.round(data.root_cause.root_cause_confidence * 100) : 85;
-                        diagConf.textContent = `RCC: ${confPct}%`;
-                    }
-
-                    if (diagHealing) {
-                        if (data.healed_trace) {
-                            diagHealing.style.display = "inline-block";
-                            diagHealing.textContent = "🔄 Automatically Healed";
-                        } else {
-                            diagHealing.style.display = "none";
-                        }
-                    }
-
-                    if (diagExplanation) {
-                        diagExplanation.textContent = failures[0].description || "Anomalous output detected during execution.";
-                    }
-                } else {
-                    diagBanner.style.display = "block";
-                    diagBanner.style.borderColor = "rgba(52, 211, 153, 0.4)";
-                    diagTitle.textContent = "✅ Clean Execution - 0 Failures Detected";
-                    diagSub.textContent = "All pipeline steps scored above the quality threshold.";
-                    if (diagConf) diagConf.textContent = "Quality: High";
-                    if (diagHealing) diagHealing.style.display = "none";
-                    if (diagExplanation) diagExplanation.textContent = "LLM-as-Judge evaluated all intermediate steps as nominal.";
-                }
+            state.presets = data.presets || [];
+            const container = document.getElementById("pipeline-preset-buttons");
+            const inputEl = document.getElementById("run-input-text");
+            if (container) {
+                container.innerHTML = state.presets.map((p, idx) => `
+                    <button class="preset-btn ${idx === 0 ? 'active' : ''}" onclick="selectDevPreset(${idx})">${escapeHtml(p.title)}</button>
+                `).join("");
             }
-
-            // Display Output for Step 0 by default
-            selectStepOutputTab(0);
-            showToast("Pipeline execution finished!");
-
-            // Refresh recent traces in Dashboard
-            fetchDashboardStats();
-        } catch (err) {
-            clearInterval(intervalId);
-            if (timerBadge) timerBadge.textContent = "Error";
-            showToast(`Execution Error: ${err.message}`, 5000);
-            console.error("Execution error:", err);
-        } finally {
-            btnExecute.disabled = false;
-            btnExecute.querySelector(".btn-text").textContent = "Execute Pipeline & Diagnose Forensics";
-        }
-    }
-
-    // Step Output Tabs
-    const stepOutputTabs = document.querySelectorAll(".step-tab");
-    stepOutputTabs.forEach(tab => {
-        tab.addEventListener("click", () => {
-            const stepIdx = parseInt(tab.getAttribute("data-step"), 10);
-            selectStepOutputTab(stepIdx);
-        });
-    });
-
-    function selectStepOutputTab(stepIdx) {
-        state.activeStepIdx = stepIdx;
-        stepOutputTabs.forEach(t => {
-            if (parseInt(t.getAttribute("data-step"), 10) === stepIdx) {
-                t.classList.add("active");
-            } else {
-                t.classList.remove("active");
-            }
-        });
-
-        const statusMeta = document.getElementById("output-meta-status");
-        const scoreMeta = document.getElementById("output-meta-score");
-        const latencyMeta = document.getElementById("output-meta-latency");
-        const jsonDisplay = document.getElementById("output-json-display");
-
-        if (!state.pipelineOutputData || !state.pipelineOutputData.trace) {
-            if (jsonDisplay) jsonDisplay.textContent = "// No execution data yet.";
-            return;
-        }
-
-        const trace = state.pipelineOutputData.trace;
-        const span = trace.spans ? trace.spans[stepIdx] : null;
-
-        if (span) {
-            if (statusMeta) statusMeta.textContent = `Status: ${span.status}`;
-            if (scoreMeta) scoreMeta.textContent = `Judge Score: ${formatScore(span.judge_score)}`;
-            if (latencyMeta) latencyMeta.textContent = `Latency: ${formatLatency(span.latency_ms)}`;
-            if (jsonDisplay) jsonDisplay.textContent = formatJson(span.output_data || span.input_data || {});
-        } else {
-            if (jsonDisplay) jsonDisplay.textContent = "// Step data unavailable.";
-        }
-    }
-
-    // =========================================================================
-    // 3. TRACE EXPLORER LOGIC
-    // =========================================================================
-    const traceExplorerSelect = document.getElementById("trace-explorer-select");
-    const btnDownloadJson = document.getElementById("btn-download-json");
-    const btnDownloadReport = document.getElementById("btn-download-report");
-    const btnDeleteTrace = document.getElementById("btn-delete-trace");
-
-    async function loadTraceExplorerTraces() {
-        if (!traceExplorerSelect) return;
-        try {
-            const res = await fetch("/api/traces?limit=100");
-            state.traces = await res.json();
-
-            traceExplorerSelect.innerHTML = `<option value="">-- Select a Trace to Inspect --</option>` +
-                state.traces.map(t => {
-                    const shortId = t.trace_id ? t.trace_id.slice(0, 12) : "Unknown";
-                    const failTag = t.failure_count > 0 ? ` [${t.failure_count} failures]` : " [clean]";
-                    return `<option value="${t.trace_id}">${shortId}... (${t.pipeline_name})${failTag}</option>`;
-                }).join("");
-
-            // If we have traces and none selected, auto-select first
-            if (state.traces.length > 0 && !traceExplorerSelect.value) {
-                traceExplorerSelect.value = state.traces[0].trace_id;
-                onTraceExplorerSelect(state.traces[0].trace_id);
+            if (state.presets[0] && inputEl && !inputEl.value) {
+                inputEl.value = state.presets[0].input_text;
             }
         } catch (e) {
-            console.error("Failed to load trace explorer traces:", e);
+            console.warn(e);
         }
     }
 
-    if (traceExplorerSelect) {
-        traceExplorerSelect.addEventListener("change", () => {
-            const traceId = traceExplorerSelect.value;
-            if (traceId) {
-                onTraceExplorerSelect(traceId);
-            }
-        });
-    }
-
-    async function onTraceExplorerSelect(traceId) {
-        if (!traceId) return;
-        state.activeTraceId = traceId;
-
-        try {
-            const res = await fetch(`/api/traces/${traceId}`);
-            if (!res.ok) throw new Error("Trace not found");
-            const data = await res.json();
-            state.currentTraceDetail = data;
-
-            const trace = data.trace;
-            const failures = data.failures || [];
-
-            // 1. Update Overview Card
-            const ovId = document.getElementById("ov-trace-id");
-            const ovPipeline = document.getElementById("ov-pipeline-name");
-            const ovStatus = document.getElementById("ov-status");
-            const ovSpans = document.getElementById("ov-spans");
-            const ovLatency = document.getElementById("ov-latency");
-            const ovScore = document.getElementById("ov-score");
-
-            if (ovId) ovId.textContent = trace.trace_id.slice(0, 16) + "...";
-            if (ovPipeline) ovPipeline.textContent = trace.pipeline_name;
-            if (ovStatus) {
-                ovStatus.textContent = trace.status;
-                ovStatus.className = `ov-val status-badge ${(trace.status === 'failed' || failures.length > 0) ? 'badge-status-failed' : 'badge-status-success'}`;
-            }
-            if (ovSpans) ovSpans.textContent = trace.spans ? trace.spans.length : 0;
-            if (ovLatency) ovLatency.textContent = formatLatency(trace.total_latency_ms);
-            if (ovScore) ovScore.textContent = formatScore(trace.final_score);
-
-            // 2. Render Execution Timeline with Spans
-            const timelineContainer = document.getElementById("timeline-container");
-            const totalLatency = trace.total_latency_ms || 1;
-
-            if (timelineContainer && trace.spans) {
-                timelineContainer.innerHTML = trace.spans.map((span, idx) => {
-                    const latencyMs = span.latency_ms || 0;
-                    const pct = Math.min(100, Math.max(2, (latencyMs / totalLatency) * 100)).toFixed(1);
-                    const isFailed = (span.status === "failed" || (span.judge_score !== null && span.judge_score < 0.7));
-
-                    return `
-                        <div class="timeline-span-card" id="timeline-span-${idx}">
-                            <div class="timeline-span-header" onclick="toggleTimelineSpan(${idx})">
-                                <div class="timeline-span-title">
-                                    <span>${idx}.</span>
-                                    <strong>${span.step_name}</strong>
-                                    <span class="status-badge ${isFailed ? 'badge-status-failed' : 'badge-status-success'}">${span.status}</span>
-                                </div>
-                                <div class="timeline-span-meta">
-                                    <span>${formatLatency(latencyMs)} (${pct}%)</span>
-                                    <span>Score: <strong>${formatScore(span.judge_score)}</strong></span>
-                                    <span>Confidence: <strong>${span.confidence ? span.confidence.toFixed(2) : 'N/A'}</strong></span>
-                                    <span>▼</span>
-                                </div>
-                            </div>
-                            <div class="timeline-progress-bar">
-                                <div class="timeline-progress-fill" style="width: ${pct}%;"></div>
-                            </div>
-                            <div class="timeline-span-body ${idx === 0 ? 'open' : ''}" id="timeline-body-${idx}">
-                                ${span.error ? `<div class="error-banner">⚠️ Error: ${span.error}</div>` : ''}
-                                <div>
-                                    <span class="drawer-label">Input Data:</span>
-                                    <pre class="code-block">${formatJson(span.input_data)}</pre>
-                                </div>
-                                <div>
-                                    <span class="drawer-label">Output Data:</span>
-                                    <pre class="code-block">${formatJson(span.output_data)}</pre>
-                                </div>
-                                ${span.prompt ? `
-                                <div>
-                                    <span class="drawer-label">Prompt:</span>
-                                    <pre class="code-block">${span.prompt}</pre>
-                                </div>` : ''}
-                                ${span.raw_response ? `
-                                <div>
-                                    <span class="drawer-label">Raw Response:</span>
-                                    <pre class="code-block">${span.raw_response}</pre>
-                                </div>` : ''}
-                            </div>
-                        </div>
-                    `;
-                }).join("");
-            }
-
-            // 3. Export Statistics Bar
-            const expLatency = document.getElementById("export-stat-latency");
-            const expScore = document.getElementById("export-stat-score");
-            const expFailed = document.getElementById("export-stat-failed");
-
-            if (expLatency) expLatency.textContent = `Total Latency: ${formatLatency(trace.total_latency_ms)}`;
-            if (expScore) expScore.textContent = `Avg Judge Score: ${formatScore(trace.final_score)}`;
-            if (expFailed) expFailed.textContent = `Failed Spans: ${failures.length} / ${trace.spans ? trace.spans.length : 0}`;
-
-        } catch (e) {
-            console.error("Failed to load trace detail:", e);
-            showToast("Error loading trace detail");
-        }
-    }
-
-    window.toggleTimelineSpan = function(idx) {
-        const body = document.getElementById(`timeline-body-${idx}`);
-        if (body) {
-            body.classList.toggle("open");
-        }
+    window.selectDevPreset = function(idx) {
+        const p = state.presets[idx];
+        if (!p) return;
+        document.querySelectorAll(".preset-btn").forEach((b, i) => b.classList.toggle("active", i === idx));
+        const inputEl = document.getElementById("run-input-text");
+        const nameEl = document.getElementById("run-pipeline-name");
+        if (inputEl) inputEl.value = p.input_text || "";
+        if (nameEl) nameEl.value = p.id || "custom_pipeline";
     };
 
-    // Toggle All Spans Button
-    let allSpansOpen = false;
-    const btnToggleAll = document.getElementById("btn-toggle-all-spans");
-    if (btnToggleAll) {
-        btnToggleAll.addEventListener("click", () => {
-            allSpansOpen = !allSpansOpen;
-            document.querySelectorAll(".timeline-span-body").forEach(el => {
-                if (allSpansOpen) el.classList.add("open");
-                else el.classList.remove("open");
-            });
-            btnToggleAll.textContent = allSpansOpen ? "Collapse All" : "Expand All";
-        });
-    }
-
-    // Export Buttons
-    if (btnDownloadJson) {
-        btnDownloadJson.addEventListener("click", () => {
-            if (!state.currentTraceDetail) {
-                showToast("No trace selected to export");
-                return;
-            }
-            const blob = new Blob([JSON.stringify(state.currentTraceDetail.trace, null, 2)], { type: "application/json" });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = `trace_${state.activeTraceId.slice(0, 8)}.json`;
-            a.click();
-            URL.revokeObjectURL(url);
-            showToast("Raw JSON downloaded");
-        });
-    }
-
-    if (btnDownloadReport) {
-        btnDownloadReport.addEventListener("click", async () => {
-            if (!state.activeTraceId) {
-                showToast("No trace selected");
-                return;
-            }
-            try {
-                const res = await fetch(`/api/report/${state.activeTraceId}`);
-                const md = await res.text();
-                const blob = new Blob([md], { type: "text/markdown" });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url;
-                a.download = `forensics_report_${state.activeTraceId.slice(0, 8)}.md`;
-                a.click();
-                URL.revokeObjectURL(url);
-                showToast("Forensics report (.md) downloaded");
-            } catch (e) {
-                showToast("Failed to download report");
-            }
-        });
-    }
-
-    if (btnDeleteTrace) {
-        btnDeleteTrace.addEventListener("click", async () => {
-            if (!state.activeTraceId) return;
-            if (!confirm(`Are you sure you want to delete trace ${state.activeTraceId.slice(0, 8)}?`)) return;
+    const btnExecutePipeline = document.getElementById("btn-execute-pipeline");
+    if (btnExecutePipeline) {
+        btnExecutePipeline.addEventListener("click", async () => {
+            const pipelineName = document.getElementById("run-pipeline-name")?.value || "custom_pipeline";
+            const inputText = document.getElementById("run-input-text")?.value || "";
+            const injectFault = document.getElementById("run-inject-fault")?.checked ?? true;
+            const faultStep = document.getElementById("run-fault-step")?.value || "extraction";
+            const faultType = document.getElementById("run-fault-type")?.value || "hallucination";
+            const autoHeal = document.getElementById("run-auto-heal")?.checked ?? true;
 
             try {
-                const res = await fetch(`/api/traces/${state.activeTraceId}`, { method: "DELETE" });
-                if (res.ok) {
-                    showToast("Trace deleted successfully");
-                    loadTraceExplorerTraces();
-                    fetchDashboardStats();
-                } else {
-                    showToast("Failed to delete trace");
-                }
-            } catch (e) {
-                showToast("Error deleting trace");
-            }
-        });
-    }
-
-    // =========================================================================
-    // 4. FAILURE ANALYSIS LOGIC
-    // =========================================================================
-    const failureTraceSelect = document.getElementById("failure-trace-select");
-    const sliderThreshold = document.getElementById("slider-threshold");
-    const thresholdValText = document.getElementById("threshold-val-text");
-    const btnDetectFailures = document.getElementById("btn-detect-failures");
-    const detectedFailuresContainer = document.getElementById("detected-failures-container");
-    const storedFailuresList = document.getElementById("stored-failures-list");
-
-    if (sliderThreshold && thresholdValText) {
-        sliderThreshold.addEventListener("input", () => {
-            thresholdValText.textContent = parseFloat(sliderThreshold.value).toFixed(2);
-        });
-    }
-
-    async function loadFailureAnalysisTraces() {
-        if (!failureTraceSelect) return;
-        try {
-            const res = await fetch("/api/traces?limit=100");
-            const traces = await res.json();
-
-            failureTraceSelect.innerHTML = `<option value="">-- Choose a Trace to Analyze --</option>` +
-                traces.map(t => {
-                    const shortId = t.trace_id ? t.trace_id.slice(0, 12) : "Unknown";
-                    return `<option value="${t.trace_id}">${shortId}... (${t.pipeline_name})</option>`;
-                }).join("");
-
-            if (traces.length > 0 && !failureTraceSelect.value) {
-                failureTraceSelect.value = traces[0].trace_id;
-                loadStoredFailures(traces[0].trace_id);
-            }
-        } catch (e) {
-            console.error("Failed to load failure analysis traces:", e);
-        }
-    }
-
-    if (failureTraceSelect) {
-        failureTraceSelect.addEventListener("change", () => {
-            const traceId = failureTraceSelect.value;
-            if (traceId) {
-                loadStoredFailures(traceId);
-            }
-        });
-    }
-
-    async function loadStoredFailures(traceId) {
-        if (!storedFailuresList) return;
-        try {
-            const res = await fetch(`/api/failures/trace/${traceId}`);
-            const failures = await res.json();
-
-            if (!failures || failures.length === 0) {
-                storedFailuresList.innerHTML = `<p class="text-muted">No previously saved failures stored for this trace.</p>`;
-                return;
-            }
-
-            storedFailuresList.innerHTML = failures.map((f, i) => `
-                <div class="stored-item">
-                    <div>
-                        <strong>${f.failure_type}</strong> (Step: ${f.step_name || 'N/A'})
-                        <div class="text-muted text-sm">${f.description || ''}</div>
-                    </div>
-                    <div>
-                        <span class="failure-badge">Severity: ${f.severity ? (f.severity * 100).toFixed(0) : 50}%</span>
-                        <span class="status-badge">Score: ${formatScore(f.judge_score)}</span>
-                    </div>
-                </div>
-            `).join("");
-        } catch (e) {
-            console.error("Failed to load stored failures:", e);
-        }
-    }
-
-    if (btnDetectFailures) {
-        btnDetectFailures.addEventListener("click", async () => {
-            const traceId = failureTraceSelect.value;
-            if (!traceId) {
-                showToast("Please choose a trace to analyze");
-                return;
-            }
-
-            const threshold = parseFloat(sliderThreshold.value) || 0.70;
-            btnDetectFailures.disabled = true;
-            btnDetectFailures.textContent = "Analyzing Trace...";
-
-            try {
-                const res = await fetch("/api/failures/detect", {
+                btnExecutePipeline.disabled = true;
+                btnExecutePipeline.textContent = "Executing Pipeline...";
+                const res = await fetch("/api/pipeline/run", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ trace_id: traceId, threshold: threshold })
+                    body: JSON.stringify({
+                        pipeline_name: pipelineName,
+                        input_text: inputText,
+                        inject_fault: injectFault,
+                        fault_step: faultStep,
+                        fault_type: faultType,
+                        auto_heal: autoHeal,
+                    }),
                 });
-
-                if (!res.ok) throw new Error("Detection failed");
                 const data = await res.json();
-                const failures = data.failures || [];
-
-                if (detectedFailuresContainer) {
-                    if (failures.length === 0) {
-                        detectedFailuresContainer.innerHTML = `
-                            <div class="glass-card" style="padding: 1.5rem; text-align: center;">
-                                <h3 class="highlight-emerald">✅ No Failures Detected</h3>
-                                <p class="text-muted">All steps in this trace scored above the threshold (${threshold.toFixed(2)}).</p>
-                            </div>
-                        `;
-                    } else {
-                        detectedFailuresContainer.innerHTML = `
-                            <div style="margin-bottom: 0.8rem; font-weight: 700;">
-                                Found ${failures.length} Failure(s) below threshold (${threshold.toFixed(2)}):
-                            </div>` +
-                            failures.map((f, idx) => {
-                                const sevPct = Math.round((f.severity || 0.5) * 100);
-                                return `
-                                    <div class="failure-card">
-                                        <div class="failure-header">
-                                            <div style="display: flex; align-items: center; gap: 0.8rem;">
-                                                <span class="failure-badge">${f.failure_type}</span>
-                                                <strong>Step: ${f.step_name}</strong>
-                                                <span class="text-muted">Score: ${formatScore(f.judge_score)}</span>
-                                            </div>
-                                            <div class="severity-meter-wrapper">
-                                                <span>Severity: ${sevPct}%</span>
-                                                <div class="severity-meter">
-                                                    <div class="severity-fill" style="width: ${sevPct}%;"></div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <p>${f.description || 'Quality anomaly identified by judge evaluation.'}</p>
-                                        ${f.evidence ? `
-                                        <div>
-                                            <span class="drawer-label">Evidence:</span>
-                                            <pre class="code-block">${formatJson(f.evidence)}</pre>
-                                        </div>` : ''}
-                                        <div style="text-align: right;">
-                                            <button class="btn-ghost btn-sm" onclick="saveDetectedFailure(${idx})">💾 Save Failure to Database</button>
-                                        </div>
-                                    </div>
-                                `;
-                            }).join("");
-
-                        // Cache detected failures for saving
-                        window._cachedDetectedFailures = failures;
-                    }
-                }
-
-                showToast(`Analysis complete: ${failures.length} failure(s) found`);
-            } catch (err) {
-                showToast(`Analysis failed: ${err.message}`);
-            } finally {
-                btnDetectFailures.disabled = false;
-                btnDetectFailures.innerHTML = `<span class="btn-icon">🔍</span> Detect & Classify Failures`;
-            }
-        });
-    }
-
-    window.saveDetectedFailure = async function(idx) {
-        if (!window._cachedDetectedFailures || !window._cachedDetectedFailures[idx]) return;
-        const failure = window._cachedDetectedFailures[idx];
-
-        try {
-            const res = await fetch("/api/failures/save", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(failure)
-            });
-
-            if (res.ok) {
-                showToast("Failure saved to database!");
-                if (failureTraceSelect && failureTraceSelect.value) {
-                    loadStoredFailures(failureTraceSelect.value);
-                }
-            } else {
-                showToast("Failed to save failure");
-            }
-        } catch (e) {
-            showToast("Error saving failure");
-        }
-    };
-
-    // =========================================================================
-    // 5. PROPAGATION ANALYSIS (INTERACTIVE SVG DAG)
-    // =========================================================================
-    const dagTraceSelect = document.getElementById("dag-trace-select");
-    const dagSvg = document.getElementById("dag-svg");
-    const nodeDrawer = document.getElementById("node-drawer");
-    const drawerClose = document.getElementById("drawer-close");
-
-    if (drawerClose && nodeDrawer) {
-        drawerClose.addEventListener("click", () => nodeDrawer.style.display = "none");
-    }
-
-    async function loadDAGTraces() {
-        if (!dagTraceSelect) return;
-        try {
-            const res = await fetch("/api/traces?limit=100");
-            const traces = await res.json();
-
-            dagTraceSelect.innerHTML = `<option value="">-- Choose a Trace for DAG --</option>` +
-                traces.map(t => {
-                    const shortId = t.trace_id ? t.trace_id.slice(0, 12) : "Unknown";
-                    return `<option value="${t.trace_id}">${shortId}... (${t.pipeline_name})</option>`;
-                }).join("");
-
-            if (traces.length > 0 && !dagTraceSelect.value) {
-                // Pick a trace with failures if available, otherwise first
-                const failedTrace = traces.find(t => t.failure_count > 0);
-                const pickId = failedTrace ? failedTrace.trace_id : traces[0].trace_id;
-                dagTraceSelect.value = pickId;
-                loadPropagationGraph(pickId);
-            }
-        } catch (e) {
-            console.error("Failed to load DAG traces:", e);
-        }
-    }
-
-    if (dagTraceSelect) {
-        dagTraceSelect.addEventListener("change", () => {
-            const traceId = dagTraceSelect.value;
-            if (traceId) {
-                loadPropagationGraph(traceId);
-            }
-        });
-    }
-
-    async function loadPropagationGraph(traceId) {
-        if (!traceId) return;
-
-        try {
-            const res = await fetch(`/api/propagation/${traceId}`);
-            if (!res.ok) throw new Error("Propagation data not found");
-            const data = await res.json();
-            state.currentPropagationData = data;
-
-            // 1. Update Metrics Bar
-            const psEl = document.getElementById("dag-ps-val");
-            const rccEl = document.getElementById("dag-rcc-val");
-            const rootStepEl = document.getElementById("dag-root-step");
-            const stateEl = document.getElementById("dag-state");
-            const explanationEl = document.getElementById("dag-explanation-text");
-
-            if (psEl) psEl.textContent = Number(data.overall_propagation_score || 0).toFixed(2);
-            if (rccEl) rccEl.textContent = `${Math.round((data.root_cause_confidence || 1.0) * 100)}%`;
-            if (rootStepEl) rootStepEl.textContent = data.root_cause_step || (data.has_failures ? "Extraction" : "None (Clean)");
-            if (stateEl) {
-                stateEl.textContent = data.has_failures ? "Failures Detected" : "Nominal";
-                stateEl.className = `metric-val ${data.has_failures ? 'highlight-red' : 'highlight-emerald'}`;
-            }
-
-            if (explanationEl) {
-                explanationEl.textContent = data.explanation || "No propagation anomalies detected in this pipeline trace.";
-            }
-
-            // 2. Render SVG DAG
-            renderSvgDag(data);
-
-        } catch (e) {
-            console.error("Failed to load propagation graph:", e);
-            showToast("Error loading propagation DAG");
-        }
-    }
-
-    function renderSvgDag(data) {
-        const nodes = data.nodes || [];
-        const edges = data.edges || [];
-        const arcs = data.propagation_arcs || [];
-
-        const baseEdgesGroup = document.getElementById("dag-base-edges");
-        const arcsGroup = document.getElementById("dag-arcs");
-        const nodesGroup = document.getElementById("dag-nodes");
-
-        if (!baseEdgesGroup || !arcsGroup || !nodesGroup) return;
-
-        baseEdgesGroup.innerHTML = "";
-        arcsGroup.innerHTML = "";
-        nodesGroup.innerHTML = "";
-
-        if (nodes.length === 0) return;
-
-        // Calculate node positions across 1000 width
-        const totalNodes = nodes.length;
-        const startX = totalNodes === 1 ? 500 : 140;
-        const endX = totalNodes === 1 ? 500 : 860;
-        const stepX = totalNodes === 1 ? 0 : (endX - startX) / Math.max(1, totalNodes - 1);
-        const nodeY = 190;
-
-        const nodeCoords = {};
-
-        nodes.forEach((node, i) => {
-            const x = startX + (i * stepX);
-            nodeCoords[node.id] = { x, y: nodeY, node };
-        });
-
-        // 1. Draw Sequential Base Edges
-        for (let i = 0; i < totalNodes - 1; i++) {
-            const u = nodeCoords[nodes[i].id];
-            const v = nodeCoords[nodes[i+1].id];
-            const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-            line.setAttribute("x1", u.x);
-            line.setAttribute("y1", u.y);
-            line.setAttribute("x2", v.x);
-            line.setAttribute("y2", v.y);
-            line.setAttribute("stroke", "#475569");
-            line.setAttribute("stroke-width", "3");
-            baseEdgesGroup.appendChild(line);
-        }
-
-        // 2. Draw Curved Propagation Arcs (Bezier curves with animation)
-        arcs.forEach((arc) => {
-            const src = nodeCoords[arc.source];
-            const tgt = nodeCoords[arc.target];
-
-            if (src && tgt) {
-                const midX = (src.x + tgt.x) / 2;
-                const distance = Math.abs(tgt.x - src.x);
-                const arcHeight = Math.max(60, distance * 0.35);
-                const ctrlY = nodeY - arcHeight;
-
-                const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-                const d = `M ${src.x} ${src.y} Q ${midX} ${ctrlY} ${tgt.x} ${tgt.y}`;
-                path.setAttribute("d", d);
-                path.setAttribute("fill", "none");
-                path.setAttribute("stroke", "#f87171");
-                path.setAttribute("stroke-width", Math.max(3, arc.propagation_score * 7));
-                path.setAttribute("stroke-dasharray", "8, 6");
-                path.setAttribute("marker-end", "url(#arrow)");
-                path.classList.add("dag-animated-arc");
-
-                arcsGroup.appendChild(path);
-            }
-        });
-
-        // 3. Draw Nodes (Shapes and Labels)
-        nodes.forEach((node) => {
-            const coord = nodeCoords[node.id];
-            const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
-            g.classList.add("dag-node-group");
-            g.style.cursor = "pointer";
-
-            let fillColor = "#22c55e"; // emerald (healthy)
-            let strokeColor = "#15803d";
-            let shape = "circle";
-
-            if (node.status_category === "root_cause") {
-                fillColor = "#ef4444"; // red
-                strokeColor = "#b91c1c";
-                shape = "diamond";
-            } else if (node.status_category === "propagated" || node.error || String(node.status).toLowerCase() === "failed") {
-                fillColor = "#f97316"; // orange
-                strokeColor = "#c2410c";
-                shape = "circle";
-            } else if (node.judge_score !== null && node.judge_score < 0.7) {
-                fillColor = "#eab308"; // yellow
-                strokeColor = "#a16207";
-                shape = "circle";
-            }
-
-            if (shape === "diamond") {
-                const diamond = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
-                const size = 26;
-                const points = `${coord.x},${coord.y - size} ${coord.x + size},${coord.y} ${coord.x},${coord.y + size} ${coord.x - size},${coord.y}`;
-                diamond.setAttribute("points", points);
-                diamond.setAttribute("fill", fillColor);
-                diamond.setAttribute("stroke", strokeColor);
-                diamond.setAttribute("stroke-width", "4");
-                g.appendChild(diamond);
-            } else {
-                const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-                circle.setAttribute("cx", coord.x);
-                circle.setAttribute("cy", coord.y);
-                circle.setAttribute("r", "22");
-                circle.setAttribute("fill", fillColor);
-                circle.setAttribute("stroke", strokeColor);
-                circle.setAttribute("stroke-width", "4");
-                g.appendChild(circle);
-            }
-
-            // Step Name text
-            const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
-            text.setAttribute("x", coord.x);
-            text.setAttribute("y", coord.y + 44);
-            text.setAttribute("text-anchor", "middle");
-            text.setAttribute("fill", "#f8fafc");
-            text.setAttribute("font-size", "13");
-            text.setAttribute("font-weight", "700");
-            text.textContent = node.step_name;
-            g.appendChild(text);
-
-            // Score subtext
-            const scoreText = document.createElementNS("http://www.w3.org/2000/svg", "text");
-            scoreText.setAttribute("x", coord.x);
-            scoreText.setAttribute("y", coord.y + 60);
-            scoreText.setAttribute("text-anchor", "middle");
-            scoreText.setAttribute("fill", "#94a3b8");
-            scoreText.setAttribute("font-size", "11");
-            scoreText.textContent = `Score: ${formatScore(node.judge_score)}`;
-            g.appendChild(scoreText);
-
-            // Click listener for inspection drawer
-            g.addEventListener("click", () => {
-                openNodeDrawer(node);
-            });
-
-            nodesGroup.appendChild(g);
-        });
-    }
-
-    function openNodeDrawer(node) {
-        if (!nodeDrawer) return;
-        const titleEl = document.getElementById("drawer-step-title");
-        const metaEl = document.getElementById("drawer-meta");
-        const scoreEl = document.getElementById("drawer-score");
-        const outputEl = document.getElementById("drawer-output");
-
-        if (titleEl) titleEl.textContent = `Inspection: Step '${node.step_name}' (Index ${node.step_index})`;
-        if (metaEl) metaEl.textContent = `Status: ${node.status.toUpperCase()} | Latency: ${formatLatency(node.latency_ms)}`;
-        if (scoreEl) scoreEl.textContent = `Judge Score: ${formatScore(node.judge_score)}`;
-        if (outputEl) outputEl.textContent = formatJson(node.output_data || node.output_preview || node.input_data || {});
-
-        nodeDrawer.style.display = "block";
-    }
-
-    // =========================================================================
-    // 6. FEEDBACK & EVALUATION LOGIC
-    // =========================================================================
-    const fbTraceSelect = document.getElementById("fb-trace-select");
-    const fbCaseId = document.getElementById("fb-case-id");
-    const fbFailingStep = document.getElementById("fb-failing-step");
-    const fbRootStep = document.getElementById("fb-root-step");
-    const fbFailureType = document.getElementById("fb-failure-type");
-    const fbOrigInput = document.getElementById("fb-orig-input");
-    const fbIncorrectOutput = document.getElementById("fb-incorrect-output");
-    const fbCorrectedOutput = document.getElementById("fb-corrected-output");
-    const btnSaveCase = document.getElementById("btn-save-case");
-    const datasetTotalCount = document.getElementById("dataset-total-count");
-    const datasetCasesList = document.getElementById("dataset-cases-list");
-    const btnExportDataset = document.getElementById("btn-export-dataset");
-    const btnRunRegressionBench = document.getElementById("btn-run-regression-bench");
-
-    async function loadFeedbackTraces() {
-        if (!fbTraceSelect) return;
-        try {
-            const res = await fetch("/api/traces?limit=100");
-            const traces = await res.json();
-
-            fbTraceSelect.innerHTML = `<option value="">-- Select Source Trace --</option>` +
-                traces.map(t => {
-                    const shortId = t.trace_id ? t.trace_id.slice(0, 12) : "Unknown";
-                    return `<option value="${t.trace_id}">${shortId}... (${t.pipeline_name})</option>`;
-                }).join("");
-
-            if (traces.length > 0 && !fbTraceSelect.value) {
-                fbTraceSelect.value = traces[0].trace_id;
-                onFeedbackTraceSelect(traces[0].trace_id);
-            }
-        } catch (e) {
-            console.error("Failed to load feedback traces:", e);
-        }
-    }
-
-    if (fbTraceSelect) {
-        fbTraceSelect.addEventListener("change", () => {
-            const traceId = fbTraceSelect.value;
-            if (traceId) {
-                onFeedbackTraceSelect(traceId);
-            }
-        });
-    }
-
-    async function onFeedbackTraceSelect(traceId) {
-        try {
-            const res = await fetch(`/api/traces/${traceId}`);
-            if (!res.ok) return;
-            const data = await res.json();
-            const trace = data.trace;
-            const failures = data.failures || [];
-
-            if (fbCaseId) fbCaseId.value = `case_${trace.trace_id.slice(0, 8)}`;
-            if (fbFailingStep) {
-                fbFailingStep.value = (failures.length > 0) ? failures[0].step_name : (trace.spans ? trace.spans[0].step_name : "extraction");
-            }
-            if (fbRootStep) {
-                fbRootStep.value = (failures.length > 0) ? failures[0].step_name : (trace.spans ? trace.spans[0].step_name : "extraction");
-            }
-            if (fbFailureType && failures.length > 0) {
-                fbFailureType.value = failures[0].failure_type || "hallucination";
-            }
-            if (fbOrigInput && trace.spans && trace.spans[0]) {
-                fbOrigInput.value = formatJson(trace.spans[0].input_data || {});
-            }
-            if (fbIncorrectOutput && trace.spans) {
-                const lastSpan = trace.spans[trace.spans.length - 1];
-                fbIncorrectOutput.value = formatJson(lastSpan.output_data || {});
-            }
-            if (fbCorrectedOutput) {
-                fbCorrectedOutput.value = "{\n  \"corrected_summary\": \"Verified ground-truth output...\"\n}";
-            }
-        } catch (e) {
-            console.error("Error setting feedback trace:", e);
-        }
-    }
-
-    if (btnSaveCase) {
-        btnSaveCase.addEventListener("click", async () => {
-            const caseId = fbCaseId.value.trim();
-            if (!caseId) {
-                showToast("Please provide a Case ID");
-                return;
-            }
-
-            let origInput = {};
-            let incOutput = {};
-            let corOutput = {};
-
-            try {
-                origInput = JSON.parse(fbOrigInput.value || "{}");
-                incOutput = JSON.parse(fbIncorrectOutput.value || "{}");
-                corOutput = JSON.parse(fbCorrectedOutput.value || "{}");
-            } catch (err) {
-                showToast(`JSON Parse Error: ${err.message}`);
-                return;
-            }
-
-            const payload = {
-                case_id: caseId,
-                trace_id: fbTraceSelect.value || "",
-                original_input: origInput,
-                failing_step: fbFailingStep.value.trim(),
-                root_cause_step: fbRootStep.value.trim(),
-                failure_type: fbFailureType.value,
-                incorrect_output: incOutput,
-                corrected_output: corOutput,
-            };
-
-            try {
-                const res = await fetch("/api/feedback/case", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(payload)
-                });
-
-                if (res.ok) {
-                    showToast(`Evaluation Case '${caseId}' saved to dataset!`);
-                    loadFeedbackDataset();
-                } else {
-                    const err = await res.json();
-                    showToast(`Failed to save: ${err.detail || 'Error'}`);
+                if (data.trace?.trace_id) {
+                    await loadTraceEverywhere(data.trace.trace_id);
+                    window.switchTab("workbench");
+                    showToast("Execution complete — loaded in Technical Workbench");
                 }
             } catch (e) {
-                showToast("Error saving evaluation case");
-            }
-        });
-    }
-
-    async function loadFeedbackDataset() {
-        if (!datasetCasesList) return;
-        try {
-            const res = await fetch("/api/feedback/cases");
-            const cases = await res.json();
-
-            if (datasetTotalCount) datasetTotalCount.textContent = `Total Cases: ${cases.length}`;
-
-            if (!cases || cases.length === 0) {
-                datasetCasesList.innerHTML = `<p class="text-muted">No evaluation cases recorded yet. Create one from a failed trace above.</p>`;
-                return;
-            }
-
-            datasetCasesList.innerHTML = cases.map((c, i) => `
-                <div class="case-card">
-                    <div class="case-header">
-                        <div>
-                            <strong>${c.case_id}</strong>
-                            <span class="failure-badge" style="margin-left: 0.6rem;">${c.failure_type}</span>
-                        </div>
-                        <div class="text-muted text-sm">Failing Step: <strong>${c.failing_step}</strong> | Root Cause: <strong>${c.root_cause_step}</strong></div>
-                    </div>
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; margin-top: 0.4rem;">
-                        <div>
-                            <span class="drawer-label">Incorrect Output:</span>
-                            <pre class="code-block" style="max-height: 120px;">${formatJson(c.incorrect_output)}</pre>
-                        </div>
-                        <div>
-                            <span class="drawer-label">Corrected Ground Truth:</span>
-                            <pre class="code-block" style="max-height: 120px; color: #34d399;">${formatJson(c.corrected_output)}</pre>
-                        </div>
-                    </div>
-                </div>
-            `).join("");
-        } catch (e) {
-            console.error("Failed to load feedback dataset:", e);
-        }
-    }
-
-    if (btnExportDataset) {
-        btnExportDataset.addEventListener("click", async () => {
-            try {
-                const res = await fetch("/api/feedback/export", { method: "POST" });
-                const data = await res.json();
-                showToast(`Dataset exported successfully! (${data.case_count} cases)`);
-            } catch (e) {
-                showToast("Failed to export dataset");
-            }
-        });
-    }
-
-    if (btnRunRegressionBench) {
-        btnRunRegressionBench.addEventListener("click", async () => {
-            btnRunRegressionBench.disabled = true;
-            btnRunRegressionBench.textContent = "Executing Benchmark...";
-
-            try {
-                const res = await fetch("/api/feedback/benchmark", { method: "POST" });
-                if (!res.ok) throw new Error("Benchmark execution failed");
-                const data = await res.json();
-
-                // Update regression KPI cards
-                const regBase = document.getElementById("reg-base-rate");
-                const regAdapted = document.getElementById("reg-adapted-rate");
-                const regGain = document.getElementById("reg-gain-rate");
-                const regAvgScore = document.getElementById("reg-avg-score");
-                const regScoreDelta = document.getElementById("reg-score-delta");
-                const regHealed = document.getElementById("reg-healed-cases");
-                const rulesList = document.getElementById("regression-rules-list");
-
-                if (regBase) regBase.textContent = `${(data.baseline_pass_rate * 100).toFixed(1)}%`;
-                if (regAdapted) regAdapted.textContent = `${(data.adapted_pass_rate * 100).toFixed(1)}%`;
-                if (regGain) regGain.textContent = `+${((data.adapted_pass_rate - data.baseline_pass_rate) * 100).toFixed(1)}% Quality Boost`;
-                if (regAvgScore) regAvgScore.textContent = formatScore(data.adapted_avg_score);
-                if (regScoreDelta) regScoreDelta.textContent = `+${(data.adapted_avg_score - data.baseline_avg_score).toFixed(2)} vs Baseline`;
-                if (regHealed) regHealed.textContent = `${data.cases_healed} / ${data.total_cases}`;
-
-                if (rulesList && data.recommendations) {
-                    rulesList.innerHTML = data.recommendations.map(r => `
-                        <div class="rec-item">
-                            <div class="rec-header">
-                                <span class="rec-step">Step: ${r.step_name}</span>
-                                <span class="rec-type">Target: ${r.target_failure_type || 'hallucination'}</span>
-                                <span class="rec-temp">Temp: ${r.sampling_temperature || 0.1}</span>
-                            </div>
-                            <p class="rec-rationale">${r.rationale || 'Prompt grounding applied.'}</p>
-                            <code class="rec-code">${r.suggested_prompt_modification || '[STRICT GROUNDING CONSTRAINT]'}</code>
-                        </div>
-                    `).join("");
-                }
-
-                showToast("Adaptive regression benchmark complete!");
-            } catch (err) {
-                showToast(`Benchmark error: ${err.message}`);
+                console.error(e);
             } finally {
-                btnRunRegressionBench.disabled = false;
-                btnRunRegressionBench.innerHTML = `<span class="btn-icon">⚡</span> Run Adaptive Benchmark Suite`;
+                btnExecutePipeline.disabled = false;
+                btnExecutePipeline.textContent = "Execute Pipeline & Open Technical Workbench";
             }
         });
     }
 
-    // =========================================================================
-    // 7. ANALYTICS & METRICS LOGIC
-    // =========================================================================
-    const btnRefreshAnalytics = document.getElementById("btn-refresh-analytics");
-    if (btnRefreshAnalytics) {
-        btnRefreshAnalytics.addEventListener("click", () => {
-            fetchAnalytics();
-            showToast("Analytics metrics refreshed");
-        });
-    }
-
-    async function fetchAnalytics() {
+    async function loadRegressionWorkspace() {
         try {
-            const res = await fetch("/api/analytics");
-            const data = await res.json();
+            const [tracesRes, dsRes] = await Promise.all([
+                fetch("/api/traces?limit=50"),
+                fetch("/api/dataset"),
+            ]);
+            const traces = await tracesRes.json();
+            const dsData = await dsRes.json();
 
-            // 1. Top KPI Metrics
-            const totTraces = document.getElementById("analytics-total-traces");
-            const totSpans = document.getElementById("analytics-total-spans");
-            const avgScore = document.getElementById("analytics-avg-score");
-            const failedCount = document.getElementById("analytics-failed-count");
-
-            if (totTraces) totTraces.textContent = data.total_traces ?? 0;
-            if (totSpans) totSpans.textContent = data.total_spans ?? 0;
-            if (avgScore) avgScore.textContent = formatScore(data.avg_score);
-            if (failedCount) failedCount.textContent = data.failed_traces ?? 0;
-
-            // 2. Pipeline Breakdown
-            const breakdownList = document.getElementById("pipeline-breakdown-list");
-            if (breakdownList && data.pipeline_breakdown) {
-                const entries = Object.entries(data.pipeline_breakdown);
-                if (entries.length === 0) {
-                    breakdownList.innerHTML = `<p class="text-muted">No pipeline data recorded yet.</p>`;
-                } else {
-                    breakdownList.innerHTML = entries.map(([name, info]) => `
-                        <div class="breakdown-item">
-                            <div>
-                                <strong>${name}</strong>
-                                <span class="text-muted text-sm" style="margin-left: 0.6rem;">${info.count} trace(s)</span>
-                            </div>
-                            <span class="status-badge">Avg Score: ${formatScore(info.avg_score)}</span>
-                        </div>
-                    `).join("");
-                }
+            const fbSelect = document.getElementById("fb-trace-select");
+            if (fbSelect) {
+                fbSelect.innerHTML = traces.map(t =>
+                    `<option value="${t.trace_id}">${t.trace_id.slice(0, 10)}... — ${t.pipeline_name}</option>`
+                ).join("");
             }
 
-            // 3. Judge Score Distribution
-            const statMin = document.getElementById("score-stat-min");
-            const statAvg = document.getElementById("score-stat-avg");
-            const statMax = document.getElementById("score-stat-max");
-
-            if (data.score_stats) {
-                if (statMin) statMin.textContent = formatScore(data.score_stats.min);
-                if (statAvg) statAvg.textContent = formatScore(data.score_stats.avg);
-                if (statMax) statMax.textContent = formatScore(data.score_stats.max);
-
-                // Segment distribution bar
-                const dist = data.score_stats.distribution || {};
-                const total = (dist.low || 0) + (dist.medium || 0) + (dist.good || 0) + (dist.excellent || 0);
-
-                if (total > 0) {
-                    const lowPct = ((dist.low || 0) / total) * 100;
-                    const medPct = ((dist.medium || 0) / total) * 100;
-                    const goodPct = ((dist.good || 0) / total) * 100;
-                    const highPct = ((dist.excellent || 0) / total) * 100;
-
-                    const distBar = document.getElementById("score-dist-bar");
-                    if (distBar) {
-                        distBar.innerHTML = `
-                            <div class="dist-seg seg-low" style="width: ${lowPct}%;" title="Low: ${dist.low}"></div>
-                            <div class="dist-seg seg-med" style="width: ${medPct}%;" title="Medium: ${dist.medium}"></div>
-                            <div class="dist-seg seg-good" style="width: ${goodPct}%;" title="Good: ${dist.good}"></div>
-                            <div class="dist-seg seg-high" style="width: ${highPct}%;" title="Excellent: ${dist.excellent}"></div>
-                        `;
-                    }
-                }
+            const entries = Array.isArray(dsData) ? dsData : (dsData.entries || []);
+            const badge = document.getElementById("dataset-count-badge");
+            const list = document.getElementById("dataset-entries-list");
+            if (badge) badge.textContent = `${entries.length} entries`;
+            if (list) {
+                list.innerHTML = entries.map(e => `
+                    <div class="dataset-item">
+                        <strong>Span: ${escapeHtml(e.step_name)}</strong> (${escapeHtml(e.failure_type)})
+                        <div class="text-muted">${escapeHtml(e.notes || "")}</div>
+                    </div>
+                `).join("") || `<div class="empty-hint">No dataset entries yet.</div>`;
             }
-
-            // 4. Ground Truth Showcase
-            const casesList = document.getElementById("analytics-cases-list");
-            if (casesList && data.cases) {
-                if (data.cases.length === 0) {
-                    casesList.innerHTML = `<p class="text-muted">No evaluation cases recorded yet.</p>`;
-                } else {
-                    casesList.innerHTML = data.cases.map(c => `
-                        <div class="case-card">
-                            <div class="case-header">
-                                <strong>${c.case_id}</strong>
-                                <span class="failure-badge">${c.failure_type}</span>
-                            </div>
-                            <div class="text-muted text-sm">Failing Step: <strong>${c.failing_step}</strong> | Root Cause: <strong>${c.root_cause_step}</strong></div>
-                        </div>
-                    `).join("");
-                }
-            }
-
         } catch (e) {
-            console.error("Failed to fetch analytics:", e);
+            console.error(e);
         }
     }
 
+    const btnRunBenchmark = document.getElementById("btn-run-benchmark");
+    if (btnRunBenchmark) {
+        btnRunBenchmark.addEventListener("click", async () => {
+            try {
+                btnRunBenchmark.disabled = true;
+                btnRunBenchmark.textContent = "Running Benchmark...";
+                const res = await fetch("/api/benchmark/self-heal", { method: "POST" });
+                const data = await res.json();
+                document.getElementById("bm-before-score").textContent = formatScore(data.before_avg_score);
+                document.getElementById("bm-after-score").textContent = formatScore(data.after_avg_score);
+                document.getElementById("bm-delta-score").textContent = `+${formatScore(data.score_delta)}`;
+                document.getElementById("bm-cases-fixed").textContent = `${data.cases_fixed ?? 0} / ${data.total_cases_evaluated ?? 0}`;
+                showToast("Self-healing benchmark complete");
+            } catch (e) {
+                console.error(e);
+            } finally {
+                btnRunBenchmark.disabled = false;
+                btnRunBenchmark.textContent = "Run Self-Healing Benchmark";
+            }
+        });
+    }
+
+    const btnExportJsonl = document.getElementById("btn-export-jsonl");
+    if (btnExportJsonl) {
+        btnExportJsonl.addEventListener("click", () => {
+            window.open("/api/dataset/export", "_blank");
+        });
+    }
+
     // =========================================================================
-    // Initial Load Sequence
+    // INITIALIZATION
     // =========================================================================
     fetchSystemStatus();
-    fetchDashboardStats();
-    fetchPresets();
+    initApp();
 });

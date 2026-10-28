@@ -3,802 +3,674 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FailureForensicsTool | AI Pipeline Observability & Failure Diagnosis</title>
-    <!-- Google Fonts -->
+    <title>FailureForensics — Self-Healing AI &amp; Technical Forensics</title>
+    <meta name="description" content="Clean Gemini-style self-healing AI output with a dedicated Developer Mode for technical forensics, DAG propagation, and mathematical evaluation.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/style.css?v=2.2">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css?v=6.0">
 </head>
 <body>
-    <!-- Top Ambient Glow -->
-    <div class="ambient-glow"></div>
 
-    <div class="app-layout">
-        <!-- Modern Left Sidebar Navigation -->
-        <aside class="app-sidebar" id="app-sidebar">
-            <div class="sidebar-brand">
-                <div class="brand-icon">🔍</div>
-                <div class="brand-text">
-                    <span class="brand-title">FailureForensics<span class="brand-highlight">Tool</span></span>
-                    <span class="brand-subtitle">AI Pipeline Forensics</span>
+    <!-- ==================== TOP GLOBAL BAR ==================== -->
+    <header class="global-topbar">
+        <div class="topbar-brand">
+            <div class="brand-mark" aria-hidden="true">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                    <path d="M2 17l10 5 10-5"/>
+                    <path d="M2 12l10 5 10-5"/>
+                </svg>
+            </div>
+            <div>
+                <span class="brand-name">FailureForensics</span>
+                <span class="brand-subpill">Self-Healing AI Pipeline</span>
+            </div>
+        </div>
+
+        <!-- PROMINENT 2-MODE SWITCHER: CLIENT/USER VIEW vs. DEVELOPER TECHNICAL MODE -->
+        <div class="mode-switcher" role="tablist" aria-label="View Mode Switcher">
+            <button class="mode-btn active" id="btn-mode-gemini" onclick="setAppMode('gemini')">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                Assistant Mode (Clean Output)
+            </button>
+            <button class="mode-btn" id="btn-mode-dev" onclick="setAppMode('dev')">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+                Developer Mode (Technical Forensics)
+            </button>
+        </div>
+
+        <div class="topbar-right">
+            <div class="runtime-chip" id="gpu-status-badge">
+                <span class="status-dot" id="sidebar-status-dot"></span>
+                <span id="gpu-text">RTX 4050 • Active</span>
+                <span class="chip-sep">·</span>
+                <span class="font-mono" id="active-model-text">qwen2.5:1.5b</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- ======================================================================= -->
+    <!-- SECTION 1: ASSISTANT MODE (GEMINI-STYLE CLEAN PROMPT -> CLEAN OUTPUT)   -->
+    <!-- ======================================================================= -->
+    <main id="gemini-clean-shell" class="gemini-container">
+
+        <!-- 1. Quick Scenario Selector Chips -->
+        <div class="sample-chips-bar">
+            <span class="chips-label">Try an example prompt:</span>
+            <div class="sample-chips-list" id="gemini-scenario-chips"></div>
+        </div>
+
+        <!-- 2. Clean Prompt Composer Box -->
+        <section class="prompt-composer-card">
+            <div class="prompt-card-top">
+                <span class="prompt-section-label">INPUT PROMPT</span>
+                <label class="simulate-toggle" title="Simulates an upstream AI hallucination in Step 2 so you can see our system catch and fix it in the background">
+                    <input type="checkbox" id="gemini-inject-fault" checked>
+                    <span>Simulate Step 2 AI Mistake (Demo Self-Healing)</span>
+                </label>
+            </div>
+            <textarea id="gemini-prompt-input" class="gemini-textarea" rows="3" placeholder="Enter any document or clinical/financial note to analyze..."></textarea>
+            <div class="prompt-card-footer">
+                <span class="prompt-hint">Runs our 4-step pipeline in the background, verifies facts against your prompt, and returns a clean output.</span>
+                <button class="btn btn-primary btn-send" id="btn-gemini-run" onclick="runGeminiLivePrompt()">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                    <span id="btn-gemini-run-label">Run &amp; Verify Output</span>
+                </button>
+            </div>
+        </section>
+
+        <!-- 3. Gemini-Style Response Card (Clean Output + Collapsible "Show Thinking") -->
+        <section class="gemini-response-card" id="gemini-response-card">
+
+            <!-- A. Collapsible "Show Thinking / Background Self-Healing" Bar (CLOSED BY DEFAULT) -->
+            <div class="thinking-accordion" id="thinking-accordion">
+                <button class="thinking-trigger" onclick="toggleThinkingDrawer()" aria-expanded="false" id="btn-thinking-trigger">
+                    <div class="thinking-trigger-left">
+                        <span class="shield-icon" id="thinking-shield-icon">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>
+                        </span>
+                        <span class="thinking-summary-text" id="thinking-summary-text">
+                            Self-Healed in Background — Caught 1 mistake in Step 2 &amp; auto-corrected before answering
+                        </span>
+                    </div>
+                    <div class="thinking-trigger-right">
+                        <span class="thinking-toggle-text" id="thinking-toggle-label">Show background thinking</span>
+                        <svg class="thinking-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                    </div>
+                </button>
+
+                <!-- Hidden Drawer: Expands when user clicks "Show background thinking" -->
+                <div class="thinking-drawer" id="thinking-drawer">
+                    <div class="thinking-drawer-inner">
+
+                        <div class="thinking-block">
+                            <div class="thinking-block-title">1. Background 4-Step AI Pipeline Execution</div>
+                            <div class="thinking-steps-row" id="thinking-steps-row"></div>
+                        </div>
+
+                        <div class="thinking-two-col">
+                            <div class="thinking-mini-box box-caught">
+                                <div class="tmini-head text-danger">What Mistake Our Judge Caught</div>
+                                <div class="tmini-body" id="thinking-what-caught">—</div>
+                                <div class="pill-list" id="thinking-false-pills" style="margin-top:8px;"></div>
+                            </div>
+                            <div class="thinking-mini-box box-fixed">
+                                <div class="tmini-head text-success">How Our Optimizer Fixed It Automatically</div>
+                                <div class="tmini-body" id="thinking-how-fixed">—</div>
+                            </div>
+                        </div>
+
+                        <div class="thinking-metrics-bar">
+                            <div id="thinking-metrics-bar" class="thinking-metrics-items"></div>
+                            <button class="btn btn-secondary btn-sm" onclick="setAppMode('dev')">
+                                Inspect Full Technical Math &amp; DAG in Developer Mode &rarr;
+                            </button>
+                        </div>
+                    </div>
                 </div>
             </div>
 
-            <nav class="sidebar-nav" id="main-nav-tabs">
-                <button class="nav-tab active" data-tab="dashboard">
-                    <span class="tab-icon">📊</span> <span class="tab-label">Dashboard</span>
+            <!-- B. Output View Switcher: "Final Verified Output" vs. "What Normal AI Said (Before Fix)" -->
+            <div class="output-mode-bar">
+                <div class="output-tabs" role="tablist">
+                    <button class="output-tab active" id="tab-output-clean" onclick="setOutputComparisonView('clean')">
+                        <span class="dot-indicator dot-green"></span>
+                        Final Verified Output
+                        <span class="trust-pill pill-green" id="clean-score-pill">94% Verified</span>
+                    </button>
+                    <button class="output-tab" id="tab-output-broken" onclick="setOutputComparisonView('broken')">
+                        <span class="dot-indicator dot-red"></span>
+                        What Normal AI Said (Before Fix)
+                        <span class="trust-pill pill-red" id="broken-score-pill">41% Hallucinated</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- C. Clean Final Output Body -->
+            <div class="gemini-answer-body" id="gemini-answer-clean"></div>
+
+            <!-- D. Broken Unhealed Output Body -->
+            <div class="gemini-answer-body answer-body-broken" id="gemini-answer-broken" style="display:none;"></div>
+
+        </section>
+
+    </main>
+
+    <!-- ======================================================================= -->
+    <!-- SECTION 2: DEVELOPER MODE (DEDICATED TECHNICAL DEMONSTRATION FOR TEACHER) -->
+    <!-- ======================================================================= -->
+    <div id="developer-workspace-shell" class="app-shell" style="display:none;">
+
+        <!-- ==================== TECHNICAL SIDEBAR ==================== -->
+        <aside class="sidebar" id="app-sidebar">
+            <nav class="sidebar-nav" aria-label="Developer Mode Navigation">
+                <div class="nav-group-label">Technical Demonstration</div>
+
+                <button class="nav-tab active" data-tab="workbench" id="nav-btn-workbench">
+                    <span class="nav-icon" aria-hidden="true">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+                        </svg>
+                    </span>
+                    <span class="nav-label">1. Forensics, Math &amp; DAG</span>
+                    <span class="nav-pill" id="nav-pill-failures">Core</span>
                 </button>
-                <button class="nav-tab" data-tab="pipeline">
-                    <span class="tab-icon">🚀</span> <span class="tab-label">Run Pipeline</span>
+
+                <button class="nav-tab" data-tab="overview" id="nav-btn-overview">
+                    <span class="nav-icon" aria-hidden="true">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+                            <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+                        </svg>
+                    </span>
+                    <span class="nav-label">2. Telemetry &amp; Trace DB</span>
                 </button>
-                <button class="nav-tab" data-tab="trace-explorer">
-                    <span class="tab-icon">🔍</span> <span class="tab-label">Trace Explorer</span>
+
+                <button class="nav-tab" data-tab="pipeline" id="nav-btn-pipeline">
+                    <span class="nav-icon" aria-hidden="true">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="5 3 19 12 5 21 5 3"/>
+                        </svg>
+                    </span>
+                    <span class="nav-label">3. Fault Injection Lab</span>
                 </button>
-                <button class="nav-tab" data-tab="failure-analysis">
-                    <span class="tab-icon">🔴</span> <span class="tab-label">Failure Analysis</span>
-                </button>
-                <button class="nav-tab" data-tab="propagation-analysis">
-                    <span class="tab-icon">🌊</span> <span class="tab-label">Propagation Analysis</span>
-                </button>
-                <button class="nav-tab" data-tab="feedback-evaluation">
-                    <span class="tab-icon">📝</span> <span class="tab-label">Feedback & Evaluation</span>
-                </button>
-                <button class="nav-tab" data-tab="analytics-metrics">
-                    <span class="tab-icon">📈</span> <span class="tab-label">Analytics & Metrics</span>
+
+                <button class="nav-tab" data-tab="regression" id="nav-btn-regression">
+                    <span class="nav-icon" aria-hidden="true">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+                        </svg>
+                    </span>
+                    <span class="nav-label">4. Benchmark &amp; JSONL</span>
                 </button>
             </nav>
 
             <div class="sidebar-footer">
-                <div class="sidebar-hw-pill">
-                    <span class="status-dot"></span>
-                    <span class="hw-mini-text">NVIDIA RTX 4050 • Active</span>
-                </div>
-                <div class="sidebar-path-pill" title="Model Storage Directory">
-                    📁 D:\ollama_models
+                <div class="runtime-card">
+                    <div class="runtime-row" id="sidebar-runtime-label">Ollama GPU Active</div>
+                    <div class="runtime-meta font-mono" id="sidebar-path-meta">D:\ollama_models</div>
                 </div>
             </div>
         </aside>
 
-        <!-- Main Content Area Wrapper -->
-        <div class="app-main-wrapper">
-            <!-- Sleek Top Status Bar -->
-            <header class="app-topbar">
-                <div class="topbar-left">
-                    <button class="btn-sidebar-toggle" id="btn-sidebar-toggle" title="Toggle Sidebar">☰</button>
-                    <div class="topbar-breadcrumb">
-                        <span class="bc-app">FailureForensics</span> / <span class="bc-current" id="bc-current-tab">Dashboard</span>
-                    </div>
-                </div>
+        <!-- ==================== TECHNICAL CONTENT AREA ==================== -->
+        <div class="main-wrapper">
+            <main class="content-area">
 
-                <div class="topbar-right">
-                    <div class="header-badges">
-                        <div class="badge-gpu" id="badge-gpu" title="Hardware acceleration active">
-                            <span class="status-dot"></span>
-                            <span id="gpu-text">NVIDIA RTX 4050 • 6GB VRAM</span>
-                        </div>
-                        <div class="badge-model" id="badge-model">
-                            <span id="active-model-text">qwen2.5:1.5b</span>
-                        </div>
-                    </div>
-                </div>
-            </header>
-
-            <!-- Main Container -->
-            <main class="main-container">
-
-        <!-- ================================================================= -->
-        <!-- 1. DASHBOARD -->
-        <!-- ================================================================= -->
-        <section id="tab-dashboard" class="tab-content active">
-            <div class="section-header">
-                <div>
-                    <h2>📊 System Overview Dashboard</h2>
-                    <p class="section-desc">Welcome to FailureForensicsTool — a framework for analyzing and diagnosing failures in multi-step AI pipelines.</p>
-                </div>
-                <button id="btn-refresh-dashboard" class="btn-ghost" title="Refresh Telemetry">🔄 Refresh Stats</button>
-            </div>
-
-            <!-- Hardware & Backend Banner -->
-            <div class="hardware-banner glass-card" id="dashboard-hardware-banner">
-                <div class="hw-icon">⚡</div>
-                <div class="hw-info">
-                    <span class="hw-title">LLM Backend Engine: <strong class="highlight-cyan" id="hw-status-text">Ollama Active with NVIDIA GPU Acceleration</strong></span>
-                    <span class="hw-details">Model Storage: <code id="hw-storage-path">D:\ollama_models</code> | GPU: <strong>NVIDIA GeForce RTX 4050 (CUDA 13.4, 29 Layers Offloaded)</strong></span>
-                </div>
-            </div>
-
-            <!-- KPI Metric Cards -->
-            <div class="kpi-grid">
-                <div class="kpi-card">
-                    <span class="kpi-icon">📋</span>
-                    <span class="kpi-label">Total Traces</span>
-                    <span class="kpi-value" id="kpi-total-traces">0</span>
-                    <span class="kpi-sub">Pipeline runs stored</span>
-                </div>
-                <div class="kpi-card highlight-card-red">
-                    <span class="kpi-icon">🔴</span>
-                    <span class="kpi-label">Failures Detected</span>
-                    <span class="kpi-value highlight-red" id="kpi-total-failures">0</span>
-                    <span class="kpi-sub">Anomalies flagged</span>
-                </div>
-                <div class="kpi-card highlight-card">
-                    <span class="kpi-icon">🎯</span>
-                    <span class="kpi-label">Avg Judge Score</span>
-                    <span class="kpi-value highlight-cyan" id="kpi-avg-judge">0.00</span>
-                    <span class="kpi-sub">Quality across spans</span>
-                </div>
-                <div class="kpi-card">
-                    <span class="kpi-icon">🌊</span>
-                    <span class="kpi-label">Traces Analyzed</span>
-                    <span class="kpi-value highlight-emerald" id="kpi-traces-analyzed">0</span>
-                    <span class="kpi-sub">Root causes evaluated</span>
-                </div>
-            </div>
-
-            <!-- Recent Traces Table Card -->
-            <div class="glass-card table-card dashboard-recent-card">
-                <div class="card-title-row">
-                    <span class="card-title">📌 Recent Pipeline Traces</span>
-                    <button class="btn-ghost" onclick="switchTab('trace-explorer')">View All in Trace Explorer →</button>
-                </div>
-                <table class="forensics-table">
-                    <thead>
-                        <tr>
-                            <th>Trace ID</th>
-                            <th>Pipeline</th>
-                            <th>Status</th>
-                            <th>Spans</th>
-                            <th>Failures</th>
-                            <th>Score</th>
-                            <th>Latency</th>
-                            <th>Action</th>
-                        </tr>
-                    </thead>
-                    <tbody id="dashboard-recent-tbody">
-                        <tr>
-                            <td colspan="8" class="loading-td">Loading recent telemetry...</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-
-            <!-- Architecture Capabilities Grid -->
-            <div class="overview-grid">
-                <div class="glass-card overview-card">
-                    <h3 class="overview-heading">🔍 Key Observability Capabilities</h3>
-                    <ul class="feature-bullets">
-                        <li><strong>Real-time trace collection:</strong> Microsecond-accurate spans captured automatically per pipeline stage.</li>
-                        <li><strong>LLM-as-Judge evaluation:</strong> Multi-criteria quality scoring (correctness, hallucination, completeness).</li>
-                        <li><strong>4-Type Failure Detection:</strong> Automated identification of entity hallucinations, schema mismatches, and misclassifications.</li>
-                        <li><strong>Propagation score (PS):</strong> Mathematical mapping of downstream failure cascade paths.</li>
-                    </ul>
-                </div>
-                <div class="glass-card overview-card">
-                    <h3 class="overview-heading">⚡ Adaptive Self-Healing & Diagnostics</h3>
-                    <ul class="feature-bullets">
-                        <li><strong>Root Cause Identification:</strong> Root Cause Confidence (RCC) scoring isolates originating faulty spans.</li>
-                        <li><strong>DAG Visualizer:</strong> Cubic bezier graph arcs highlighting active failure transmissions.</li>
-                        <li><strong>Closed-Loop Healing:</strong> Dynamic prompt engineering & sampling adjustments repair pipeline errors automatically.</li>
-                        <li><strong>Persistent Storage:</strong> SQLite database with full regression dataset suite.</li>
-                    </ul>
-                </div>
-            </div>
-        </section>
-
-        <!-- ================================================================= -->
-        <!-- 2. RUN PIPELINE -->
-        <!-- ================================================================= -->
-        <section id="tab-pipeline" class="tab-content">
-            <div class="section-header">
-                <div>
-                    <h2>🚀 Run Pipeline & Real-Time Forensics Studio</h2>
-                    <p class="section-desc">Execute multi-step AI pipelines with GPU acceleration, test dense unstructured documents, and diagnose failures in real-time.</p>
-                </div>
-                <div class="controls-pill">
-                    <label class="switch-container">
-                        <input type="checkbox" id="toggle-auto-heal" checked>
-                        <span class="switch-slider"></span>
-                        <span class="switch-label">🔄 Auto-Heal & Correct</span>
-                    </label>
-                    <label class="switch-container">
-                        <input type="checkbox" id="toggle-evaluate" checked>
-                        <span class="switch-slider"></span>
-                        <span class="switch-label">🔍 LLM Judge</span>
-                    </label>
-                </div>
-            </div>
-
-            <!-- Studio Grid Layout -->
-            <div class="studio-grid">
-                <!-- Left: Configuration & Input Column -->
-                <div class="glass-card input-card">
-                    <div class="card-title-row">
-                        <span class="card-title">📝 Input Data & Ingestion</span>
-                        <div class="model-select-wrapper">
-                            <label for="select-model" class="mini-label">Model Tier:</label>
-                            <select id="select-model" class="custom-select">
-                                <option value="qwen2.5:1.5b" selected>qwen2.5:1.5b (Fast & Cool • 80+ t/s)</option>
-                                <option value="qwen2.5:7b-instruct">qwen2.5:7b-instruct (Heavy Reasoning)</option>
-                            </select>
-                        </div>
-                    </div>
-
-                    <!-- Preset Templates Quick Select -->
-                    <div class="preset-section">
-                        <span class="preset-label">1-Click Scenarios:</span>
-                        <div class="preset-chips">
-                            <button class="preset-chip active" data-preset="clinical">🏥 Clinical Triage (Adversarial)</button>
-                            <button class="preset-chip" data-preset="financial">💼 Corporate 10-Q (Discrepancy)</button>
-                            <button class="preset-chip" data-preset="security">🛡️ Cloud Security (Noise)</button>
-                            <button class="preset-chip" data-preset="clean">🚀 Clean Launch (Healthy)</button>
-                        </div>
-                    </div>
-
-                    <!-- File Drop Area -->
-                    <div class="file-drop-area" id="file-drop-area">
-                        <input type="file" id="file-input" accept=".txt,.json,.csv,.md" hidden>
-                        <div class="drop-icon">📁</div>
-                        <div class="drop-text">
-                            <span class="drop-main">Drop text or log file here, or <span class="browse-link">browse</span></span>
-                            <span class="drop-sub">Supports .txt, .json, .csv, .md (Auto-structured for pipeline)</span>
-                        </div>
-                    </div>
-
-                    <!-- Text Area -->
-                    <div class="textarea-wrapper">
-                        <textarea id="prompt-input" rows="8" placeholder="Paste unstructured clinical notes, financial statements, or system logs..."></textarea>
-                        <div class="textarea-footer">
-                            <span id="char-word-count">0 characters • 0 words • Domain: GENERAL</span>
-                            <button id="btn-auto-structure" class="btn-ghost" title="Auto-structure messy text">✨ Auto-Structure</button>
-                        </div>
-                    </div>
-
-                    <!-- Execute Button -->
-                    <button id="btn-execute" class="btn-primary">
-                        <span class="btn-icon">▶️</span>
-                        <span class="btn-text">Execute Pipeline & Diagnose Forensics</span>
-                    </button>
-                </div>
-
-                <!-- Right: Live Pipeline Stepper & Results -->
-                <div class="glass-card results-card">
-                    <div class="card-title-row">
-                        <span class="card-title">📡 Live Pipeline Stepper & Telemetry</span>
-                        <span id="execution-timer" class="timer-badge">Ready</span>
-                    </div>
-
-                    <!-- 4-Step Animated Pipeline Stepper -->
-                    <div class="pipeline-stepper" id="pipeline-stepper">
-                        <div class="step-node" id="step-node-0">
-                            <div class="step-icon">📥</div>
-                            <div class="step-meta">
-                                <span class="step-title">0. Intake</span>
-                                <span class="step-status">Idle</span>
-                            </div>
-                            <div class="step-indicator"></div>
-                        </div>
-                        <div class="step-connector"></div>
-                        <div class="step-node" id="step-node-1">
-                            <div class="step-icon">🔬</div>
-                            <div class="step-meta">
-                                <span class="step-title">1. Extraction</span>
-                                <span class="step-status">Idle</span>
-                            </div>
-                            <div class="step-indicator"></div>
-                        </div>
-                        <div class="step-connector"></div>
-                        <div class="step-node" id="step-node-2">
-                            <div class="step-icon">🏷️</div>
-                            <div class="step-meta">
-                                <span class="step-title">2. Classification</span>
-                                <span class="step-status">Idle</span>
-                            </div>
-                            <div class="step-indicator"></div>
-                        </div>
-                        <div class="step-connector"></div>
-                        <div class="step-node" id="step-node-3">
-                            <div class="step-icon">📑</div>
-                            <div class="step-meta">
-                                <span class="step-title">3. Summarization</span>
-                                <span class="step-status">Idle</span>
-                            </div>
-                            <div class="step-indicator"></div>
-                        </div>
-                    </div>
-
-                    <!-- Pipeline Diagnosis & Auto-Heal Banner -->
-                    <div class="diagnosis-banner" id="diagnosis-banner" style="display: none;">
-                        <div class="diagnosis-header">
-                            <span class="diag-icon" id="diag-icon">🚨</span>
-                            <div class="diag-titles">
-                                <span class="diag-title" id="diag-title">Root Cause Failure Diagnosed</span>
-                                <span class="diag-sub" id="diag-sub">Fault origin: Step 1 (Extraction)</span>
-                            </div>
-                            <div class="diag-badges">
-                                <span class="badge-confidence" id="diag-confidence">RCC: 85%</span>
-                                <span class="badge-healing" id="diag-healing">🔄 Self-Healed</span>
-                            </div>
-                        </div>
-                        <p class="diag-explanation" id="diag-explanation"></p>
-                    </div>
-
-                    <!-- Step Output Viewer Tabs -->
-                    <div class="step-output-tabs" id="step-output-tabs">
-                        <button class="step-tab active" data-step="0">0. Intake</button>
-                        <button class="step-tab" data-step="1">1. Extraction</button>
-                        <button class="step-tab" data-step="2">2. Classification</button>
-                        <button class="step-tab" data-step="3">3. Summarization</button>
-                    </div>
-
-                    <!-- Step JSON / Output Body -->
-                    <div class="step-output-container">
-                        <div class="step-output-meta">
-                            <span id="output-meta-status">Status: Pending</span>
-                            <span id="output-meta-score">Judge Score: --</span>
-                            <span id="output-meta-latency">Latency: --</span>
-                        </div>
-                        <pre id="output-json-display" class="code-block json-viewer">// Run the pipeline to view real-time stage outputs and telemetry...</pre>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <!-- ================================================================= -->
-        <!-- 3. TRACE EXPLORER -->
-        <!-- ================================================================= -->
-        <section id="tab-trace-explorer" class="tab-content">
-            <div class="section-header">
-                <div>
-                    <h2>🔍 Trace Explorer</h2>
-                    <p class="section-desc">Browse, inspect, and analyze complete execution traces, individual spans, latency distributions, and export reports.</p>
-                </div>
-                <div class="explorer-selector-row">
-                    <label for="trace-explorer-select" class="mini-label">Choose a trace:</label>
-                    <select id="trace-explorer-select" class="custom-select select-wide">
-                        <option value="">Loading traces...</option>
-                    </select>
-                </div>
-            </div>
-
-            <!-- Trace Overview Card -->
-            <div class="glass-card trace-overview-card" id="trace-overview-card">
-                <div class="trace-overview-grid">
-                    <div class="overview-item">
-                        <span class="ov-label">Trace ID</span>
-                        <span class="ov-val font-mono" id="ov-trace-id">--</span>
-                    </div>
-                    <div class="overview-item">
-                        <span class="ov-label">Pipeline</span>
-                        <span class="ov-val" id="ov-pipeline-name">--</span>
-                    </div>
-                    <div class="overview-item">
-                        <span class="ov-label">Status</span>
-                        <span class="ov-val status-badge" id="ov-status">--</span>
-                    </div>
-                    <div class="overview-item">
-                        <span class="ov-label">Total Spans</span>
-                        <span class="ov-val" id="ov-spans">--</span>
-                    </div>
-                    <div class="overview-item">
-                        <span class="ov-label">Total Latency</span>
-                        <span class="ov-val highlight-cyan" id="ov-latency">--</span>
-                    </div>
-                    <div class="overview-item">
-                        <span class="ov-label">Final Quality Score</span>
-                        <span class="ov-val highlight-emerald" id="ov-score">--</span>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Execution Timeline -->
-            <div class="glass-card timeline-card">
-                <div class="card-title-row">
-                    <h3 class="card-title">⏱️ Execution Timeline & Span Breakdown</h3>
-                    <button id="btn-toggle-all-spans" class="btn-ghost btn-sm">Expand / Collapse All</button>
-                </div>
-                <div class="timeline-container" id="timeline-container">
-                    <p class="text-muted">Select a trace to view span timeline breakdown.</p>
-                </div>
-            </div>
-
-            <!-- Trace Statistics & Export Bar -->
-            <div class="trace-export-row glass-card">
-                <div class="export-stat-group">
-                    <span id="export-stat-latency">Total Latency: --</span>
-                    <span id="export-stat-score">Avg Judge Score: --</span>
-                    <span id="export-stat-failed">Failed Spans: --</span>
-                </div>
-                <div class="export-button-group">
-                    <button id="btn-download-json" class="btn-ghost">💾 Download Raw JSON</button>
-                    <button id="btn-download-report" class="btn-ghost">📄 Download Forensics Report (.md)</button>
-                    <button id="btn-delete-trace" class="btn-danger">🗑️ Delete Trace</button>
-                </div>
-            </div>
-        </section>
-
-        <!-- ================================================================= -->
-        <!-- 4. FAILURE ANALYSIS -->
-        <!-- ================================================================= -->
-        <section id="tab-failure-analysis" class="tab-content">
-            <div class="section-header">
-                <div>
-                    <h2>🔴 Failure Detection & Classification</h2>
-                    <p class="section-desc">Detect, classify, and isolate failures across execution traces using the LLM-as-Judge engine.</p>
-                </div>
-            </div>
-
-            <!-- Configuration & Threshold Slider -->
-            <div class="glass-card config-card">
-                <div class="card-title-row">
-                    <span class="card-title">⚙️ Detection Threshold Configuration</span>
-                    <span class="threshold-pill">Threshold: <strong id="threshold-val-text">0.70</strong></span>
-                </div>
-                <div class="slider-wrapper">
-                    <input type="range" id="slider-threshold" min="0.0" max="1.0" step="0.05" value="0.70" class="range-slider">
-                    <span class="slider-hint">Judge quality scores below this threshold are flagged and classified as failures.</span>
-                </div>
-            </div>
-
-            <!-- Trace Selection & Detect Action -->
-            <div class="glass-card analyze-bar-card">
-                <div class="analyze-bar-grid">
-                    <div class="select-col">
-                        <label for="failure-trace-select" class="mini-label">Choose trace to analyze:</label>
-                        <select id="failure-trace-select" class="custom-select select-wide">
-                            <option value="">Loading traces...</option>
-                        </select>
-                    </div>
-                    <button id="btn-detect-failures" class="btn-primary">
-                        <span class="btn-icon">🔍</span> Detect & Classify Failures
-                    </button>
-                </div>
-            </div>
-
-            <!-- Detected Failures Container -->
-            <div id="detected-failures-container" class="detected-failures-section">
-                <!-- Dynamically populated cards -->
-            </div>
-
-            <!-- Stored Failures from Database -->
-            <div class="glass-card stored-failures-card">
-                <div class="card-title-row">
-                    <span class="card-title">📊 Persisted Failures in Database for Selected Trace</span>
-                </div>
-                <div id="stored-failures-list" class="stored-list">
-                    <p class="text-muted">Select a trace to load stored database failures.</p>
-                </div>
-            </div>
-        </section>
-
-        <!-- ================================================================= -->
-        <!-- 5. PROPAGATION ANALYSIS -->
-        <!-- ================================================================= -->
-        <section id="tab-propagation-analysis" class="tab-content">
-            <div class="section-header">
-                <div>
-                    <h2>🌊 Failure Propagation & Interactive DAG</h2>
-                    <p class="section-desc">Observe the causal cascade of hallucinations and errors propagating across multi-step pipeline components.</p>
-                </div>
-                <div class="dag-controls">
-                    <label for="dag-trace-select" class="mini-label">Trace:</label>
-                    <select id="dag-trace-select" class="custom-select select-wide">
-                        <option value="">Select trace...</option>
-                    </select>
-                </div>
-            </div>
-
-            <!-- Metrics Bar -->
-            <div class="dag-metrics-row glass-card">
-                <div class="metric-item">
-                    <span class="metric-label">Propagation Score (PS):</span>
-                    <span class="metric-val highlight-orange" id="dag-ps-val">0.00</span>
-                </div>
-                <div class="metric-item">
-                    <span class="metric-label">Root Cause Confidence:</span>
-                    <span class="metric-val highlight-red" id="dag-rcc-val">100%</span>
-                </div>
-                <div class="metric-item">
-                    <span class="metric-label">Identified Root Span:</span>
-                    <span class="metric-val highlight-cyan" id="dag-root-step">--</span>
-                </div>
-                <div class="metric-item">
-                    <span class="metric-label">Diagnosis State:</span>
-                    <span class="metric-val" id="dag-state">Healthy</span>
-                </div>
-            </div>
-
-            <!-- SVG DAG Canvas -->
-            <div class="glass-card dag-canvas-card">
-                <div class="canvas-header">
-                    <span class="canvas-title">Interactive Topology & Transmission Arcs</span>
-                    <div class="canvas-legend">
-                        <span class="legend-item"><span class="legend-dot root-dot"></span> Root Cause</span>
-                        <span class="legend-item"><span class="legend-dot prop-dot"></span> Propagated Failure</span>
-                        <span class="legend-item"><span class="legend-dot healthy-dot"></span> Healthy Step</span>
-                        <span class="legend-item"><span class="legend-line"></span> Cascade Arc</span>
-                    </div>
-                </div>
-
-                <div class="svg-container" id="svg-container">
-                    <svg id="dag-svg" width="100%" height="320" viewBox="0 0 1000 320">
-                        <defs>
-                            <marker id="arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                                <path d="M 0 0 L 10 5 L 0 10 z" fill="#f87171" />
-                            </marker>
-                        </defs>
-                        <g id="dag-base-edges"></g>
-                        <g id="dag-arcs"></g>
-                        <g id="dag-nodes"></g>
-                    </svg>
-                </div>
-            </div>
-
-            <!-- AI Forensic Explanation Narrative -->
-            <div class="glass-card explanation-card">
-                <h3 class="card-title">📑 AI Forensic Investigation Explanation</h3>
-                <pre id="dag-explanation-text" class="explanation-box">Select a trace to view AI-generated root cause and propagation explanation.</pre>
-            </div>
-
-            <!-- Selected Node Drawer (Modal / Card) -->
-            <div class="node-drawer glass-card" id="node-drawer" style="display: none;">
-                <div class="drawer-header">
-                    <h3 id="drawer-step-title">Step Inspection</h3>
-                    <button id="drawer-close" class="btn-ghost">✕</button>
-                </div>
-                <div class="drawer-grid">
-                    <div>
-                        <span class="drawer-label">Status & Latency:</span>
-                        <div id="drawer-meta" class="drawer-val">--</div>
-                    </div>
-                    <div>
-                        <span class="drawer-label">Judge Quality Score:</span>
-                        <div id="drawer-score" class="drawer-val">--</div>
-                    </div>
-                </div>
-                <div class="drawer-body">
-                    <span class="drawer-label">Output Data:</span>
-                    <pre id="drawer-output" class="code-block json-viewer"></pre>
-                </div>
-            </div>
-        </section>
-
-        <!-- ================================================================= -->
-        <!-- 6. FEEDBACK & EVALUATION -->
-        <!-- ================================================================= -->
-        <section id="tab-feedback-evaluation" class="tab-content">
-            <div class="section-header">
-                <div>
-                    <h2>📝 Feedback & Evaluation Management</h2>
-                    <p class="section-desc">Create evaluation cases from failed traces for regression testing, manage continuous evaluation datasets, and run adaptive benchmarks.</p>
-                </div>
-            </div>
-
-            <!-- Sub-Tabs Navigation -->
-            <div class="sub-nav-tabs">
-                <button class="sub-nav-tab active" data-subtab="create-case">➕ Create Evaluation Case</button>
-                <button class="sub-nav-tab" data-subtab="manage-dataset">📋 Manage Dataset</button>
-                <button class="sub-nav-tab" data-subtab="run-regression">🔄 Run Adaptive Regression</button>
-            </div>
-
-            <!-- Sub-Tab 1: Create Evaluation Case -->
-            <div id="subtab-create-case" class="subtab-content active">
-                <div class="glass-card case-form-card">
-                    <h3 class="card-title">Create Case from Failed Trace</h3>
-                    <div class="form-row">
-                        <div class="form-group flex-2">
-                            <label for="fb-trace-select" class="mini-label">Select Source Trace:</label>
-                            <select id="fb-trace-select" class="custom-select select-wide">
-                                <option value="">Loading traces...</option>
-                            </select>
-                        </div>
-                        <div class="form-group flex-1">
-                            <label for="fb-case-id" class="mini-label">Case ID:</label>
-                            <input type="text" id="fb-case-id" class="custom-input" placeholder="case_example_01">
-                        </div>
-                    </div>
-
-                    <div class="form-row">
-                        <div class="form-group flex-1">
-                            <label for="fb-failing-step" class="mini-label">Failing Step:</label>
-                            <input type="text" id="fb-failing-step" class="custom-input" placeholder="extraction">
-                        </div>
-                        <div class="form-group flex-1">
-                            <label for="fb-root-step" class="mini-label">Root Cause Step:</label>
-                            <input type="text" id="fb-root-step" class="custom-input" placeholder="extraction">
-                        </div>
-                        <div class="form-group flex-1">
-                            <label for="fb-failure-type" class="mini-label">Failure Type:</label>
-                            <select id="fb-failure-type" class="custom-select">
-                                <option value="hallucination">Hallucination</option>
-                                <option value="misclassification">Misclassification</option>
-                                <option value="incomplete_output">Incomplete Output</option>
-                                <option value="other">Other / Schema Violation</option>
-                            </select>
-                        </div>
-                    </div>
-
-                    <div class="form-row-3">
-                        <div class="form-group">
-                            <label for="fb-orig-input" class="mini-label">Original Input (JSON):</label>
-                            <textarea id="fb-orig-input" rows="6" class="custom-textarea font-mono" placeholder="{}"></textarea>
-                        </div>
-                        <div class="form-group">
-                            <label for="fb-incorrect-output" class="mini-label">Incorrect Output (JSON):</label>
-                            <textarea id="fb-incorrect-output" rows="6" class="custom-textarea font-mono" placeholder="{}"></textarea>
-                        </div>
-                        <div class="form-group">
-                            <label for="fb-corrected-output" class="mini-label">Corrected Ground Truth Output (JSON):</label>
-                            <textarea id="fb-corrected-output" rows="6" class="custom-textarea font-mono" placeholder="{}"></textarea>
-                        </div>
-                    </div>
-
-                    <button id="btn-save-case" class="btn-primary">
-                        <span class="btn-icon">💾</span> Save Evaluation Case to Dataset
-                    </button>
-                </div>
-            </div>
-
-            <!-- Sub-Tab 2: Manage Dataset -->
-            <div id="subtab-manage-dataset" class="subtab-content">
-                <div class="glass-card dataset-card">
-                    <div class="card-title-row">
-                        <span class="card-title">📁 Evaluation Cases in Dataset</span>
-                        <div class="dataset-actions">
-                            <span class="dataset-count-badge" id="dataset-total-count">Total Cases: 0</span>
-                            <button id="btn-export-dataset" class="btn-ghost">📥 Export Dataset to File</button>
-                        </div>
-                    </div>
-                    <div id="dataset-cases-list" class="cases-deck">
-                        <p class="text-muted">Loading evaluation cases from database...</p>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Sub-Tab 3: Run Regression -->
-            <div id="subtab-run-regression" class="subtab-content">
-                <div class="glass-card benchmark-runner-card">
-                    <div class="section-header no-border">
+                <!-- =========================================================== -->
+                <!-- DEV TAB 1 (DEFAULT): FORENSICS, ALGORITHMIC MATH & DAG      -->
+                <!-- =========================================================== -->
+                <section class="tab-content active" id="tab-workbench">
+                    <div class="workspace-header">
                         <div>
-                            <h3>⚡ Automated Regression & Closed-Loop Healing Benchmark</h3>
-                            <p class="section-desc">Run baseline unadapted pipeline vs dynamically self-healed pipeline across all evaluation cases.</p>
+                            <div class="dev-mode-tag">DEVELOPER MODE • TECHNICAL ARCHITECTURE &amp; FORENSICS</div>
+                            <h1 class="workspace-title">Algorithmic Root-Cause Localization, Causal DAG &amp; Patch Diff</h1>
+                            <p class="workspace-subtitle">Demonstrates the mathematical scoring, graph propagation analysis, and raw JSON mutations performed under the hood.</p>
                         </div>
-                        <button id="btn-run-regression-bench" class="btn-primary">
-                            <span class="btn-icon">⚡</span> Run Adaptive Benchmark Suite
-                        </button>
+                        <div class="workbench-selector-bar">
+                            <label for="wb-trace-select" class="selector-label">Inspect Trace:</label>
+                            <select id="wb-trace-select" class="form-select font-mono"></select>
+                            <button class="btn btn-primary" id="btn-wb-heal">Re-Run Optimizer Patch</button>
+                        </div>
                     </div>
 
-                    <div class="benchmark-kpi-grid" id="regression-kpi-grid">
+                    <!-- Top Technical Telemetry Ribbon -->
+                    <div class="telemetry-ribbon" id="wb-telemetry-ribbon">
+                        <div class="ribbon-cell">
+                            <span class="ribbon-label">TRACE UUID</span>
+                            <span class="ribbon-val font-mono" id="wb-trace-id">—</span>
+                        </div>
+                        <div class="ribbon-cell">
+                            <span class="ribbon-label">PIPELINE GRAPH</span>
+                            <span class="ribbon-val font-mono" id="wb-pipeline-name">—</span>
+                        </div>
+                        <div class="ribbon-cell">
+                            <span class="ribbon-label">PIPELINE STATUS</span>
+                            <span class="ribbon-val" id="wb-status">—</span>
+                        </div>
+                        <div class="ribbon-cell">
+                            <span class="ribbon-label">ISOLATED ROOT SPAN</span>
+                            <span class="ribbon-val font-mono text-danger" id="wb-root-step">—</span>
+                        </div>
+                        <div class="ribbon-cell">
+                            <span class="ribbon-label">ROOT CAUSE CONFIDENCE (RCC)</span>
+                            <span class="ribbon-val font-mono text-accent" id="wb-rcc-val">—</span>
+                        </div>
+                        <div class="ribbon-cell">
+                            <span class="ribbon-label">PROPAGATION SCORE (PS)</span>
+                            <span class="ribbon-val font-mono text-amber" id="wb-ps-val">—</span>
+                        </div>
+                        <div class="ribbon-cell">
+                            <span class="ribbon-label">SCORE RECOVERY (&Delta;Q)</span>
+                            <span class="ribbon-val font-mono" id="wb-score-comparison">—</span>
+                        </div>
+                    </div>
+
+                    <!-- TECHNICAL SECTION 1: MATHEMATICAL FORMULAS & ALGORITHMIC PROOF -->
+                    <div class="panel-card workbench-section">
+                        <div class="section-header-bar">
+                            <div class="step-badge">1</div>
+                            <div>
+                                <h2 class="panel-title">Mathematical Formulation &amp; Algorithmic Metrics</h2>
+                                <p class="panel-desc">Core equations executed by <code>FailureDetector</code>, <code>PropagationAnalyzer</code>, <code>RootCauseEngine</code>, and <code>AdaptiveOptimizer</code>.</p>
+                            </div>
+                        </div>
+
+                        <div class="tech-math-grid">
+                            <div class="tech-math-card">
+                                <div class="tmath-head">
+                                    <span class="tmath-title">1. LLM-as-a-Judge Fault Detection</span>
+                                    <span class="tmath-module font-mono">FailureDetector</span>
+                                </div>
+                                <div class="tmath-formula font-mono">Fault(s_i) = I( JudgeScore(s_i) &lt; &tau; ),  &tau; = 0.70</div>
+                                <div class="tmath-live font-mono text-danger" id="tmath-val-detector">Step 'extraction': 0.32 &lt; 0.70 &rarr; FAULT</div>
+                                <div class="tmath-explain">Each span is scored in [0, 1] for factual grounding and constraint adherence. Any span below &tau; = 0.70 triggers classification.</div>
+                            </div>
+
+                            <div class="tech-math-card">
+                                <div class="tmath-head">
+                                    <span class="tmath-title">2. Causal Propagation Score (PS)</span>
+                                    <span class="tmath-module font-mono">PropagationAnalyzer</span>
+                                </div>
+                                <div class="tmath-formula font-mono">PS(i&rarr;j) = (1 - S_i) &times; (1 - S_j) &times; W_dep</div>
+                                <div class="tmath-live font-mono text-amber" id="tmath-val-ps">Overall PS = 0.33 (2 downstream spans)</div>
+                                <div class="tmath-explain">Quantifies how strongly an upstream error at span i degrades downstream dependent spans j across the DAG.</div>
+                            </div>
+
+                            <div class="tech-math-card">
+                                <div class="tmath-head">
+                                    <span class="tmath-title">3. Root-Cause Confidence (RCC)</span>
+                                    <span class="tmath-module font-mono">RootCauseEngine</span>
+                                </div>
+                                <div class="tmath-formula font-mono">RCC = &alpha;&middot;Depth + &beta;&middot;Severity + &gamma;&middot;Cascade</div>
+                                <div class="tmath-live font-mono text-accent" id="tmath-val-rcc">RCC = 88% (Step 2: extraction)</div>
+                                <div class="tmath-explain">Ranks candidate failing spans by topological earliness (&alpha;), score drop magnitude (&beta;), and downstream blast radius (&gamma;).</div>
+                            </div>
+
+                            <div class="tech-math-card">
+                                <div class="tmath-head">
+                                    <span class="tmath-title">4. Closed-Loop Quality Gain (&Delta;Q)</span>
+                                    <span class="tmath-module font-mono">AdaptiveOptimizer</span>
+                                </div>
+                                <div class="tmath-formula font-mono">&Delta;Q = Score_healed - Score_baseline</div>
+                                <div class="tmath-live font-mono text-success" id="tmath-val-delta">0.41 &rarr; 0.94 (&Delta;Q = +0.53)</div>
+                                <div class="tmath-explain">Mutates temperature (&rarr; 0.0) and injects a grounding guardrail at the root-cause span, then re-evaluates the full pipeline.</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- TECHNICAL SECTION 2: CAUSAL PROPAGATION DAG (SVG) & DOMINO TRACE -->
+                    <div class="panel-card workbench-section">
+                        <div class="section-header-bar">
+                            <div class="step-badge">2</div>
+                            <div>
+                                <h2 class="panel-title">Directed Acyclic Graph (DAG) Causal Propagation &amp; Span Cascade</h2>
+                                <p class="panel-desc">Topological execution graph showing how the fault at the root span propagated along directed edges to corrupt downstream spans.</p>
+                            </div>
+                        </div>
+
+                        <div class="dag-and-domino-grid">
+                            <div class="dag-panel">
+                                <div class="dag-legend">
+                                    <span class="legend-item"><span class="legend-dot dot-root"></span> Root Cause Span</span>
+                                    <span class="legend-item"><span class="legend-dot dot-prop"></span> Propagated Fault</span>
+                                    <span class="legend-item"><span class="legend-dot dot-corrupt"></span> Corrupted Terminal Output</span>
+                                    <span class="legend-item"><span class="legend-dot dot-clean"></span> Healthy Span (&ge; 0.70)</span>
+                                </div>
+                                <div class="dag-svg-wrapper" id="wb-dag-container"></div>
+                            </div>
+                            <div class="domino-panel">
+                                <div class="domino-list" id="wb-domino-list"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- TECHNICAL SECTION 3: GROUND TRUTH VS FAULTY PAYLOAD EVIDENCE -->
+                    <div class="panel-card workbench-section">
+                        <div class="section-header-bar">
+                            <div class="step-badge">3</div>
+                            <div>
+                                <h2 class="panel-title" id="wb-verdict-title">Source Ground-Truth vs. Faulty Span Payload Verification</h2>
+                                <p class="panel-desc" id="wb-verdict-summary">Token-level claim verification comparing source input against the originating fault span.</p>
+                            </div>
+                            <span class="status-badge" id="wb-verdict-badge">AUDITED</span>
+                        </div>
+
+                        <div class="evidence-split-grid">
+                            <div class="evidence-box evidence-box-truth">
+                                <div class="evidence-box-head">
+                                    <span class="evidence-tag tag-truth">SOURCE INPUT PAYLOAD (GROUND TRUTH)</span>
+                                </div>
+                                <div class="evidence-text" id="wb-source-text">—</div>
+                                <div class="claims-block">
+                                    <div class="claims-label">Verified Grounded Entities:</div>
+                                    <div class="pill-list" id="wb-verified-pills"></div>
+                                </div>
+                            </div>
+
+                            <div class="evidence-box evidence-box-fault">
+                                <div class="evidence-box-head">
+                                    <span class="evidence-tag tag-fault" id="wb-fault-step-tag">ORIGINATING FAULT SPAN PAYLOAD</span>
+                                    <span class="evidence-meta font-mono" id="wb-fault-score-meta">Judge Score: —</span>
+                                </div>
+                                <pre class="evidence-code font-mono" id="wb-fault-output">—</pre>
+                                <div class="claims-block">
+                                    <div class="claims-label">Ungrounded / Hallucinated Tokens Flagged:</div>
+                                    <div class="pill-list" id="wb-ungrounded-pills"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- TECHNICAL SECTION 4: ADAPTIVE OPTIMIZER PATCH & RAW JSON BEFORE/AFTER DIFF -->
+                    <div class="panel-card workbench-section">
+                        <div class="section-header-bar">
+                            <div class="step-badge">4</div>
+                            <div>
+                                <h2 class="panel-title">AdaptiveOptimizer Patch &amp; Raw JSON Before vs. After Diff</h2>
+                                <p class="panel-desc">Exact hyperparameter/prompt mutations injected into the root-cause step and the resulting raw JSON outputs across all 4 stages.</p>
+                            </div>
+                            <div class="remediation-delta-pill font-mono" id="wb-remediation-delta-pill">Score Delta: —</div>
+                        </div>
+                        <div class="changes-applied-box" id="wb-changes-applied-box"></div>
+                        <div class="diff-table-wrapper" id="wb-diff-table-wrapper"></div>
+                    </div>
+
+                    <!-- TECHNICAL SECTION 5: RAW SPAN TELEMETRY ACCORDION -->
+                    <div class="panel-card workbench-section">
+                        <div class="section-header-bar">
+                            <div class="step-badge">5</div>
+                            <div>
+                                <h2 class="panel-title">Raw Span Execution Telemetry (Input / Output JSON &amp; Latency)</h2>
+                                <p class="panel-desc">Click any span below to inspect its exact input/output JSON dictionaries and execution latency.</p>
+                            </div>
+                        </div>
+                        <div class="raw-spans-accordion" id="wb-raw-spans"></div>
+                    </div>
+                </section>
+
+                <!-- =========================================================== -->
+                <!-- DEV TAB 2: TELEMETRY & TRACE DATABASE                       -->
+                <!-- =========================================================== -->
+                <section class="tab-content" id="tab-overview">
+                    <div class="workspace-header">
+                        <div>
+                            <div class="dev-mode-tag">DEVELOPER MODE • SYSTEM TELEMETRY</div>
+                            <h1 class="workspace-title">Aggregate Telemetry &amp; Stored Trace Database</h1>
+                            <p class="workspace-subtitle">Statistical distributions and complete execution ledger across all recorded pipeline runs.</p>
+                        </div>
+                        <div class="header-actions">
+                            <button class="btn btn-secondary" id="btn-refresh-dashboard">Refresh Telemetry</button>
+                        </div>
+                    </div>
+
+                    <div class="kpi-grid">
                         <div class="kpi-card">
-                            <span class="kpi-label">Baseline Pass Rate</span>
-                            <span class="kpi-value" id="reg-base-rate">0.0%</span>
-                            <span class="kpi-sub">Unadapted Pipeline</span>
+                            <div class="kpi-header"><span class="kpi-title">TOTAL TRACES</span></div>
+                            <div class="kpi-value" id="kpi-total-traces">0</div>
+                            <div class="kpi-foot">Recorded multi-step runs</div>
                         </div>
-                        <div class="kpi-card highlight-card">
-                            <span class="kpi-label">Adapted Pass Rate</span>
-                            <span class="kpi-value highlight-cyan" id="reg-adapted-rate">100.0%</span>
-                            <span class="kpi-sub" id="reg-gain-rate">+33.3% Quality Boost</span>
-                        </div>
-                        <div class="kpi-card">
-                            <span class="kpi-label">Average Judge Score</span>
-                            <span class="kpi-value" id="reg-avg-score">0.89</span>
-                            <span class="kpi-sub" id="reg-score-delta">+0.32 vs Baseline</span>
+                        <div class="kpi-card kpi-card-danger">
+                            <div class="kpi-header"><span class="kpi-title">DETECTED FAILURES</span></div>
+                            <div class="kpi-value text-danger" id="kpi-total-failures">0</div>
+                            <div class="kpi-foot">Spans below 0.70 threshold</div>
                         </div>
                         <div class="kpi-card">
-                            <span class="kpi-label">Healed Test Cases</span>
-                            <span class="kpi-value highlight-emerald" id="reg-healed-cases">3 / 3</span>
-                            <span class="kpi-sub">Failures Fully Resolved</span>
+                            <div class="kpi-header"><span class="kpi-title">MEAN JUDGE SCORE</span></div>
+                            <div class="kpi-value text-accent" id="kpi-avg-judge">0.00</div>
+                            <div class="kpi-foot">LLM-as-a-Judge quality</div>
+                        </div>
+                        <div class="kpi-card">
+                            <div class="kpi-header"><span class="kpi-title">EVALUATED TRACES</span></div>
+                            <div class="kpi-value text-success" id="kpi-traces-analyzed">0</div>
+                            <div class="kpi-foot">Complete forensic audit</div>
                         </div>
                     </div>
 
-                    <div class="benchmark-details-card glass-card">
-                        <h4 class="card-title">💡 Synthesized Adaptive Rules Applied</h4>
-                        <div class="recommendations-list" id="regression-rules-list">
-                            <p class="text-muted">Run benchmark to see dynamically generated optimizer prompts and rules.</p>
+                    <div class="analytics-strip">
+                        <div class="panel-card">
+                            <div class="panel-head">
+                                <h2 class="panel-title">Judge Score Distribution</h2>
+                                <span class="panel-meta font-mono" id="dist-evaluated-count">0 spans</span>
+                            </div>
+                            <div class="score-stat-row">
+                                <div class="stat-pill"><span class="stat-label">Min</span><span class="stat-val font-mono text-danger" id="score-stat-min">0.00</span></div>
+                                <div class="stat-pill"><span class="stat-label">Mean</span><span class="stat-val font-mono text-accent" id="score-stat-avg">0.00</span></div>
+                                <div class="stat-pill"><span class="stat-label">Max</span><span class="stat-val font-mono text-success" id="score-stat-max">0.00</span></div>
+                            </div>
+                            <div class="bar-list" id="chart-score-buckets"></div>
                         </div>
-                    </div>
-                </div>
-            </div>
-        </section>
 
-        <!-- ================================================================= -->
-        <!-- 7. ANALYTICS & METRICS -->
-        <!-- ================================================================= -->
-        <section id="tab-analytics-metrics" class="tab-content">
-            <div class="section-header">
-                <div>
-                    <h2>📈 System Analytics & Global Evaluation Metrics</h2>
-                    <p class="section-desc">Comprehensive system-wide metrics, judge score distributions, pipeline performance breakdowns, and regression tracking.</p>
-                </div>
-                <button id="btn-refresh-analytics" class="btn-ghost">🔄 Refresh Analytics</button>
-            </div>
-
-            <!-- Top Analytics KPI Grid -->
-            <div class="kpi-grid">
-                <div class="kpi-card">
-                    <span class="kpi-label">Total Traces Logged</span>
-                    <span class="kpi-value" id="analytics-total-traces">0</span>
-                    <span class="kpi-sub">Complete Executions</span>
-                </div>
-                <div class="kpi-card">
-                    <span class="kpi-label">Total Spans Executed</span>
-                    <span class="kpi-value highlight-cyan" id="analytics-total-spans">0</span>
-                    <span class="kpi-sub">Stage Executions</span>
-                </div>
-                <div class="kpi-card highlight-card">
-                    <span class="kpi-label">Average Quality Score</span>
-                    <span class="kpi-value highlight-emerald" id="analytics-avg-score">0.00</span>
-                    <span class="kpi-sub">Judge Evaluation Average</span>
-                </div>
-                <div class="kpi-card highlight-card-red">
-                    <span class="kpi-label">Failed Traces Count</span>
-                    <span class="kpi-value highlight-red" id="analytics-failed-count">0</span>
-                    <span class="kpi-sub">Requiring Diagnosis</span>
-                </div>
-            </div>
-
-            <!-- Pipeline Breakdown & Score Distribution Side-by-Side -->
-            <div class="analytics-grid">
-                <!-- Pipeline Breakdown -->
-                <div class="glass-card analytics-card">
-                    <h3 class="card-title">📊 Pipeline Breakdown</h3>
-                    <div id="pipeline-breakdown-list" class="breakdown-list">
-                        <p class="text-muted">Loading pipeline breakdown...</p>
-                    </div>
-                </div>
-
-                <!-- Judge Score Distribution -->
-                <div class="glass-card analytics-card">
-                    <h3 class="card-title">🎯 Judge Score Distribution</h3>
-                    <div class="score-stats-grid">
-                        <div class="score-stat-box">
-                            <span class="stat-box-label">Min Score</span>
-                            <span class="stat-box-val" id="score-stat-min">0.00</span>
+                        <div class="panel-card">
+                            <div class="panel-head">
+                                <h2 class="panel-title">Failure Taxonomy Breakdown</h2>
+                                <span class="panel-meta">By root class</span>
+                            </div>
+                            <div class="bar-list" id="chart-failure-types"></div>
                         </div>
-                        <div class="score-stat-box">
-                            <span class="stat-box-label">Average Score</span>
-                            <span class="stat-box-val highlight-cyan" id="score-stat-avg">0.00</span>
-                        </div>
-                        <div class="score-stat-box">
-                            <span class="stat-box-label">Max Score</span>
-                            <span class="stat-box-val highlight-emerald" id="score-stat-max">1.00</span>
+
+                        <div class="panel-card">
+                            <div class="panel-head">
+                                <h2 class="panel-title">Severity Distribution</h2>
+                                <span class="panel-meta">Impact level</span>
+                            </div>
+                            <div class="bar-list" id="chart-severities"></div>
                         </div>
                     </div>
 
-                    <!-- Visual Segmented Distribution Bar -->
-                    <div class="distribution-bar-wrapper">
-                        <span class="dist-title">Score Density Buckets:</span>
-                        <div class="dist-bar" id="score-dist-bar">
-                            <div class="dist-seg seg-low" style="width: 25%;" title="Low (<0.50)"></div>
-                            <div class="dist-seg seg-med" style="width: 25%;" title="Medium (0.50-0.70)"></div>
-                            <div class="dist-seg seg-good" style="width: 25%;" title="Good (0.70-0.90)"></div>
-                            <div class="dist-seg seg-high" style="width: 25%;" title="Excellent (>=0.90)"></div>
+                    <div class="panel-card">
+                        <div class="panel-head">
+                            <div>
+                                <h2 class="panel-title">Pipeline Trace Ledger</h2>
+                                <p class="panel-desc">Click <strong>Inspect in Technical Workbench</strong> on any trace to load its DAG and raw JSON spans.</p>
+                            </div>
+                            <div class="filter-group">
+                                <button class="filter-chip active" data-filter="all">All Runs</button>
+                                <button class="filter-chip" data-filter="failed">Failed Only</button>
+                                <button class="filter-chip" data-filter="success">Healthy Only</button>
+                            </div>
                         </div>
-                        <div class="dist-legend">
-                            <span><span class="legend-box low-box"></span> Low (&lt;0.5)</span>
-                            <span><span class="legend-box med-box"></span> Medium (0.5-0.7)</span>
-                            <span><span class="legend-box good-box"></span> Good (0.7-0.9)</span>
-                            <span><span class="legend-box high-box"></span> Excellent (&ge;0.9)</span>
+
+                        <div class="table-container">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Trace ID</th>
+                                        <th>Pipeline Scenario</th>
+                                        <th>Status</th>
+                                        <th>Judge Score</th>
+                                        <th>Spans</th>
+                                        <th>Faults</th>
+                                        <th>Latency</th>
+                                        <th class="text-right">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="overview-traces-tbody"></tbody>
+                            </table>
                         </div>
                     </div>
-                </div>
-            </div>
+                </section>
 
-            <!-- Stored Evaluation Cases Showcase -->
-            <div class="glass-card analytics-cases-card">
-                <h3 class="card-title">📋 Ground Truth Evaluation Cases Showcase</h3>
-                <div id="analytics-cases-list" class="cases-deck">
-                    <p class="text-muted">Loading cases...</p>
-                </div>
-            </div>
-        </section>
-        </main>
+                <!-- =========================================================== -->
+                <!-- DEV TAB 3: FAULT INJECTION LAB                              -->
+                <!-- =========================================================== -->
+                <section class="tab-content" id="tab-pipeline">
+                    <div class="workspace-header">
+                        <div>
+                            <div class="dev-mode-tag">DEVELOPER MODE • CONTROLLED FAULT INJECTION LAB</div>
+                            <h1 class="workspace-title">Execute Pipeline with Custom Fault Injection</h1>
+                            <p class="workspace-subtitle">Test how faults injected at different topological stages (Step 1, Step 2, or Step 3) propagate and self-heal.</p>
+                        </div>
+                    </div>
+                    <div class="run-workspace-grid">
+                        <div class="panel-card">
+                            <div class="panel-head"><h2 class="panel-title">1. Source Payload &amp; Scenario Preset</h2></div>
+                            <div class="preset-buttons" id="pipeline-preset-buttons"></div>
+                            <div class="form-group">
+                                <label class="form-label" for="run-pipeline-name">Pipeline Identifier</label>
+                                <input type="text" id="run-pipeline-name" class="form-input font-mono" value="clinical_triage_pipeline">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="run-input-text">Source Document Text</label>
+                                <textarea id="run-input-text" class="form-textarea" rows="6"></textarea>
+                            </div>
+                        </div>
+                        <div class="panel-card">
+                            <div class="panel-head"><h2 class="panel-title">2. Fault Injection Parameters</h2></div>
+                            <div class="toggle-card">
+                                <div class="toggle-info">
+                                    <div class="toggle-title">Enable Synthetic Fault Injection</div>
+                                    <div class="toggle-desc">Forces a controlled failure at the target step below.</div>
+                                </div>
+                                <input type="checkbox" id="run-inject-fault" class="toggle-checkbox" checked>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="run-fault-step">Target Span to Corrupt</label>
+                                <select id="run-fault-step" class="form-select">
+                                    <option value="extraction" selected>Step 2: Extraction (Triggers 3-Step Cascade)</option>
+                                    <option value="intake">Step 1: Intake (Triggers Full 4-Step Cascade)</option>
+                                    <option value="classification">Step 3: Classification (Triggers Summary Cascade)</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="run-fault-type">Failure Taxonomy Class</label>
+                                <select id="run-fault-type" class="form-select">
+                                    <option value="hallucination" selected>Hallucination (Unverified Extrapolation)</option>
+                                    <option value="semantic_drift">Semantic Drift (Polarity / Topic Shift)</option>
+                                    <option value="missing_constraints">Missing Constraints (Dropped Entities)</option>
+                                </select>
+                            </div>
+                            <div class="toggle-card">
+                                <div class="toggle-info">
+                                    <div class="toggle-title">Closed-Loop Auto-Heal</div>
+                                    <div class="toggle-desc">Automatically runs AdaptiveOptimizer and records Before/After diffs.</div>
+                                </div>
+                                <input type="checkbox" id="run-auto-heal" class="toggle-checkbox" checked>
+                            </div>
+                            <button class="btn btn-primary btn-block" id="btn-execute-pipeline">Execute Pipeline &amp; Open Technical Workbench</button>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- =========================================================== -->
+                <!-- DEV TAB 4: REGRESSION BENCHMARK & JSONL DATASET             -->
+                <!-- =========================================================== -->
+                <section class="tab-content" id="tab-regression">
+                    <div class="workspace-header">
+                        <div>
+                            <div class="dev-mode-tag">DEVELOPER MODE • BATCH EVALUATION &amp; FINE-TUNING DATASET</div>
+                            <h1 class="workspace-title">Batch Self-Healing Benchmark &amp; JSONL Dataset Exporter</h1>
+                            <p class="workspace-subtitle">Evaluate automated recovery across the multi-scenario test suite and curate human-in-the-loop JSONL training data.</p>
+                        </div>
+                        <div class="header-actions">
+                            <button class="btn btn-primary" id="btn-run-benchmark">Run Self-Healing Benchmark</button>
+                            <button class="btn btn-secondary" id="btn-export-jsonl">Export JSONL Dataset</button>
+                        </div>
+                    </div>
+
+                    <div class="panel-card">
+                        <div class="kpi-grid">
+                            <div class="kpi-card">
+                                <div class="kpi-header"><span class="kpi-title">BASELINE MEAN SCORE</span></div>
+                                <div class="kpi-value text-danger" id="bm-before-score">—</div>
+                                <div class="kpi-foot">Before optimizer patch</div>
+                            </div>
+                            <div class="kpi-card">
+                                <div class="kpi-header"><span class="kpi-title">REMEDIATED MEAN SCORE</span></div>
+                                <div class="kpi-value text-success" id="bm-after-score">—</div>
+                                <div class="kpi-foot">After prompt/temp mutation</div>
+                            </div>
+                            <div class="kpi-card">
+                                <div class="kpi-header"><span class="kpi-title">MEAN QUALITY GAIN (&Delta;Q)</span></div>
+                                <div class="kpi-value text-accent" id="bm-delta-score">—</div>
+                                <div class="kpi-foot">Net score improvement</div>
+                            </div>
+                            <div class="kpi-card">
+                                <div class="kpi-header"><span class="kpi-title">CASES RECOVERED</span></div>
+                                <div class="kpi-value" id="bm-cases-fixed">—</div>
+                                <div class="kpi-foot">Passed &ge; 0.70 threshold</div>
+                            </div>
+                        </div>
+                        <div id="bm-recommendations-list" class="bm-recs-container">
+                            <div class="empty-hint">Click <strong>Run Self-Healing Benchmark</strong> above to evaluate multi-trace recovery.</div>
+                        </div>
+                    </div>
+
+                    <div class="run-workspace-grid">
+                        <div class="panel-card">
+                            <div class="panel-head"><h2 class="panel-title">Add Human-in-the-Loop Failure Annotation</h2></div>
+                            <div class="form-group">
+                                <label class="form-label" for="fb-trace-select">Select Trace</label>
+                                <select id="fb-trace-select" class="form-select font-mono"></select>
+                            </div>
+                            <div class="form-row-2">
+                                <div class="form-group">
+                                    <label class="form-label" for="fb-step-select">Failing Span</label>
+                                    <select id="fb-step-select" class="form-select">
+                                        <option value="extraction">extraction</option>
+                                        <option value="intake">intake</option>
+                                        <option value="classification">classification</option>
+                                        <option value="summarization">summarization</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label" for="fb-type-select">Failure Class</label>
+                                    <select id="fb-type-select" class="form-select">
+                                        <option value="hallucination">hallucination</option>
+                                        <option value="semantic_drift">semantic_drift</option>
+                                        <option value="missing_constraints">missing_constraints</option>
+                                        <option value="cascading_error">cascading_error</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="fb-corrected-output">Verified Ground-Truth Output</label>
+                                <textarea id="fb-corrected-output" class="form-textarea" rows="3" placeholder="Enter ground-truth output for fine-tuning..."></textarea>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="fb-notes">Technical Reviewer Notes</label>
+                                <input type="text" id="fb-notes" class="form-input" placeholder="Notes on failure mode...">
+                            </div>
+                            <button class="btn btn-primary" id="btn-submit-feedback">Save Record to Dataset</button>
+                        </div>
+
+                        <div class="panel-card">
+                            <div class="panel-head">
+                                <h2 class="panel-title">Curated Failure Dataset Entries</h2>
+                                <span class="panel-meta font-mono" id="dataset-count-badge">0 entries</span>
+                            </div>
+                            <div class="dataset-list" id="dataset-entries-list"></div>
+                        </div>
+                    </div>
+                </section>
+
+            </main>
+        </div>
     </div>
-</div>
 
-    <!-- Notification Toast -->
-    <div id="toast" class="toast"></div>
+    <div id="toast-notification" class="toast" role="status" aria-live="polite"></div>
 
-    <script src="/static/app.js?v=2.2"></script>
+    <script src="/static/app.js?v=6.0"></script>
 </body>
 </html>

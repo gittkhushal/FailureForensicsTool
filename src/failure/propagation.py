@@ -101,11 +101,22 @@ class PropagationAnalyzer:
         Returns:
             Propagation score (0-1)
         """
-        source_score = source_span.judge_score or 0.5
-        target_score = target_span.judge_score or 0.5
+        source_score = source_span.judge_score if source_span.judge_score is not None else 0.5
+        target_score = target_span.judge_score if target_span.judge_score is not None else 0.5
         
         # Simple heuristic: how much did score drop
         score_drop = max(0.0, source_score - target_score)
+        
+        # If both source and target explicitly failed below threshold (< 0.7),
+        # capture cascading degradation even when the root step scored lower than downstream
+        if (
+            score_drop == 0.0
+            and source_span.judge_score is not None
+            and target_span.judge_score is not None
+            and source_score < 0.7
+            and target_score < 0.7
+        ):
+            score_drop = (1.0 - target_score) * (1.0 - source_score)
         
         # Distance decay: closer = more influence
         distance = target_span.step_index - source_span.step_index
