@@ -156,47 +156,131 @@ def render():
         except Exception as e:
             st.error(f"Error: {e}")
     
-    # Run regression
+    # Run regression & Self-Improving Adaptation
     with tab3:
-        st.subheader("Run Regression Tests")
+        st.subheader("🔄 Closed-Loop Regression & Self-Improving Benchmark")
         
-        st.markdown("Re-execute evaluation cases and track results.")
+        st.markdown(
+            "Execute stored evaluation cases against the baseline pipeline, or benchmark the "
+            "**Self-Improving Adaptive Optimizer** to measure automated recovery gains."
+        )
         
         try:
             db = Database()
             eval_repo = EvaluationRepository(db)
-            
             cases = eval_repo.list_cases(limit=100)
             
-            if cases:
-                st.metric("Available Cases", len(cases))
+            if not cases:
+                st.info("No evaluation cases found in database. Create a case in 'Create Case' tab first.")
+            else:
+                col_info1, col_info2 = st.columns(2)
+                with col_info1:
+                    st.metric("Stored Evaluation Cases", len(cases))
+                with col_info2:
+                    unique_types = len(set(c.failure_type for c in cases))
+                    st.metric("Unique Failure Types", unique_types)
                 
                 st.divider()
                 
-                if st.button("🚀 Run Regression", type="primary"):
-                    with st.spinner("Running regression tests..."):
+                col_btn1, col_btn2 = st.columns(2)
+                with col_btn1:
+                    run_standard = st.button("🚀 Run Standard Regression", type="secondary")
+                with col_btn2:
+                    run_adaptive = st.button("⚡ Run Self-Improving Adaptation & Benchmark", type="primary")
+                
+                # Option 1: Standard Regression
+                if run_standard:
+                    with st.spinner("Running standard regression tests..."):
                         runner = RegressionRunner()
                         results = runner.run(cases)
                         
-                        st.success(f"✅ Regression complete! {len(results)} results")
+                        st.success(f"✅ Regression complete! Processed {len(results)} cases")
                         
-                        if results:
-                            st.subheader("Regression Results")
+                        passed = sum(1 for r in results if r.passed)
+                        failed = len(results) - passed
+                        pass_rate = (passed / len(results)) * 100 if results else 0
+                        avg_score = sum(r.score for r in results) / len(results) if results else 0
+                        
+                        col1, col2, col3, col4 = st.columns(4)
+                        with col1:
+                            st.metric("Total Runs", len(results))
+                        with col2:
+                            st.metric("Passed", passed)
+                        with col3:
+                            st.metric("Failed", failed)
+                        with col4:
+                            st.metric("Pass Rate", f"{pass_rate:.1f}%")
                             
-                            passed = sum(1 for r in results if r.passed)
-                            failed = len(results) - passed
+                        st.divider()
+                        st.subheader("Detailed Run Log")
+                        for r in results:
+                            st.write(
+                                f"{'✅' if r.passed else '❌'} **{r.case_id}** | "
+                                f"Score: `{r.score:.2f}` | Passed: `{r.passed}`"
+                            )
+                
+                # Option 2: Self-Improving Closed-Loop Benchmark
+                if run_adaptive:
+                    with st.spinner("Analyzing root causes, synthesizing adaptive configurations, and benchmarking..."):
+                        runner = RegressionRunner()
+                        report = runner.compare_runs(cases)
+                        
+                        st.success("🎉 Self-Improving Adaptive Optimization Complete!")
+                        st.divider()
+                        
+                        # Comparison Metric Cards
+                        st.subheader("📈 Before vs. After Optimization Delta")
+                        m1, m2, m3, m4 = st.columns(4)
+                        with m1:
+                            st.metric(
+                                "Baseline Pass Rate", 
+                                f"{report.baseline_pass_rate:.1%}"
+                            )
+                        with m2:
+                            st.metric(
+                                "Adapted Pass Rate", 
+                                f"{report.adapted_pass_rate:.1%}",
+                                delta=f"{report.pass_rate_gain:+.1%}"
+                            )
+                        with m3:
+                            st.metric(
+                                "Avg Quality Score", 
+                                f"{report.adapted_avg_score:.2f}",
+                                delta=f"{report.score_gain:+.2f}"
+                            )
+                        with m4:
+                            st.metric(
+                                "Healed / Fixed Cases", 
+                                f"{report.cases_fixed} / {report.total_cases_evaluated}"
+                            )
                             
-                            col1, col2, col3 = st.columns(3)
-                            
-                            with col1:
-                                st.metric("Passed", passed)
-                            with col2:
-                                st.metric("Failed", failed)
-                            with col3:
-                                pass_rate = passed / len(results) * 100 if results else 0
-                                st.metric("Pass Rate", f"{pass_rate:.1f}%")
-            else:
-                st.info("No evaluation cases available for regression testing")
-        
+                        st.divider()
+                        
+                        # Applied Adaptive Recommendations
+                        st.subheader("💡 Applied Adaptive Recommendations")
+                        for rec in report.recommendations_applied:
+                            with st.expander(f"Step: {rec.target_step} (Targeting {rec.failure_type})", expanded=True):
+                                st.write(f"**Rationale:** {rec.rationale}")
+                                st.write(f"**Suggested LLM Temperature:** `{rec.suggested_temperature}`")
+                                st.code(rec.prompt_guideline_prefix, language="markdown")
+                                if rec.parameter_adjustments:
+                                    st.json(rec.parameter_adjustments)
+                        
+                        st.divider()
+                        
+                        # Comparative Breakdown
+                        st.subheader("📊 Case-by-Case Improvement Breakdown")
+                        for detail in report.detailed_results:
+                            status_icon = "🌟 Fixed" if detail["fixed"] else ("✅ Passed" if detail["adapted_passed"] else "❌ Needs Tuning")
+                            col_a, col_b, col_c = st.columns([2, 1, 1])
+                            with col_a:
+                                st.write(f"**{detail['case_id']}** ({detail['failure_type']} @ {detail['failing_step']})")
+                            with col_b:
+                                st.write(f"Score: `{detail['baseline_score']:.2f}` ➔ `{detail['adapted_score']:.2f}`")
+                            with col_c:
+                                st.markdown(f"**{status_icon}**")
+                                
         except Exception as e:
-            st.error(f"Error: {e}")
+            st.error(f"Error executing regression view: {e}")
+            import traceback
+            st.code(traceback.format_exc())

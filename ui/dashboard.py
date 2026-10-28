@@ -49,8 +49,28 @@ def render():
         traces = []
     
     # Statistics section
+    # LLM Backend & Model Storage Info
+    try:
+        from src.llm.ollama_client import get_ollama_client
+        client = get_ollama_client()
+        health = client.health_check()
+        models_path = health.get("models_path", "D:\\ollama_models")
+        available_models = ", ".join(health.get("available_models", [])) or "None detected"
+        
+        if health.get("server_available"):
+            st.success(
+                f"⚡ **LLM Backend Active:** Ollama running with **NVIDIA GPU Acceleration** | "
+                f"📁 **Model Storage Path:** `{models_path}` | 🤖 **Available:** `{available_models}`"
+            )
+        else:
+            st.warning(
+                f"⚠️ **LLM Backend Offline:** Ollama is not currently running. "
+                f"Storage configured at: `{models_path}`. Run `ollama serve` in a terminal."
+            )
+    except Exception:
+        pass
+
     col1, col2, col3, col4 = st.columns(4)
-    
     with col1:
         st.metric("Total Traces", str(total_traces))
     

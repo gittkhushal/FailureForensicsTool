@@ -1,0 +1,73 @@
+[
+  {
+    "case_id": "case_med_hallucination_01",
+    "trace_id": "7852704e-89ac-4bb9-bf65-b0516e0695e6",
+    "failure_id": null,
+    "original_input": {
+      "text": "The patient reported mild headache after taking medication A."
+    },
+    "failing_step": "extraction",
+    "incorrect_output": {
+      "symptoms": [
+        "severe migraine",
+        "loss of consciousness",
+        "cardiac arrest"
+      ]
+    },
+    "corrected_output": {
+      "symptoms": [
+        "mild headache"
+      ],
+      "medication": "medication A"
+    },
+    "failure_type": "hallucination",
+    "root_cause_step": "extraction",
+    "severity": 0.5,
+    "created_at": "2026-10-26T21:26:56.298500",
+    "confirmed": false
+  },
+  {
+    "case_id": "case_triage_escalation_02",
+    "trace_id": "7852704e-89ac-4bb9-bf65-b0516e0695e6",
+    "failure_id": null,
+    "original_input": {
+      "symptoms": [
+        "mild headache"
+      ]
+    },
+    "failing_step": "classification",
+    "incorrect_output": {
+      "triage_level": "CRITICAL EMERGENCY"
+    },
+    "corrected_output": {
+      "triage_level": "Routine Outpatient",
+      "confidence": 0.95
+    },
+    "failure_type": "misclassification",
+    "root_cause_step": "extraction",
+    "severity": 0.5,
+    "created_at": "2026-10-26T21:26:56.298518",
+    "confirmed": false
+  },
+  {
+    "case_id": "case_truncation_summary_03",
+    "trace_id": "7852704e-89ac-4bb9-bf65-b0516e0695e6",
+    "failure_id": null,
+    "original_input": {
+      "patient": "John Doe",
+      "history": "Hypertension, stable on lisinopril"
+    },
+    "failing_step": "summarization",
+    "incorrect_output": {
+      "summary": "Patient has"
+    },
+    "corrected_output": {
+      "summary": "Patient John Doe with history of hypertension, clinically stable on lisinopril."
+    },
+    "failure_type": "incomplete_output",
+    "root_cause_step": "summarization",
+    "severity": 0.5,
+    "created_at": "2026-10-26T21:26:56.298525",
+    "confirmed": false
+  }
+]

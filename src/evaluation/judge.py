@@ -7,7 +7,7 @@ Provides:
 """
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 import json
 
 from src.models.evaluation_models import JudgeResult, EvaluationCriteria
@@ -21,15 +21,20 @@ logger = logging.getLogger(__name__)
 class Judge:
     """LLM-based evaluator of pipeline outputs."""
     
-    def __init__(self, model: str = "qwen2.5:7b-instruct"):
+    def __init__(self, model: Optional[str] = None):
         """
         Initialize judge.
         
         Args:
-            model: LLM model to use
+            model: Optional LLM model to use (defaults to currently active client model)
         """
-        self.llm = get_ollama_client(model=model)
-        self.model = model
+        if model:
+            self.llm = get_ollama_client(model=model)
+            self.model = str(model)
+        else:
+            self.llm = get_ollama_client()
+            raw_model = getattr(self.llm, "model", "qwen2.5:7b-instruct")
+            self.model = str(raw_model) if isinstance(raw_model, str) else "qwen2.5:7b-instruct"
         self.logger = logging.getLogger(f"{__name__}")
     
     def evaluate(

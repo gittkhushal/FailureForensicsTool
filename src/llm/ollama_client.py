@@ -8,6 +8,8 @@ Provides:
 - Error handling and recovery
 """
 
+import os
+from pathlib import Path
 import requests
 import json
 import logging
@@ -15,8 +17,30 @@ import time
 from typing import Optional, Dict, Any
 from datetime import datetime
 
+# Load project environment if python-dotenv is available
+try:
+    from dotenv import load_dotenv
+    _env_path = Path(__file__).resolve().parent.parent.parent / ".env"
+    if _env_path.exists():
+        load_dotenv(dotenv_path=_env_path)
+except ImportError:
+    pass
 
-logger = logging.getLogger(__name__)
+# Ensure OLLAMA_MODELS points to D:\ollama_models by default
+DEFAULT_OLLAMA_MODELS = os.getenv("OLLAMA_MODELS", r"D:\ollama_models")
+if "OLLAMA_MODELS" not in os.environ:
+    os.environ["OLLAMA_MODELS"] = DEFAULT_OLLAMA_MODELS
+
+
+# Model tier mappings for dynamic model routing
+MODEL_TIERS: Dict[str, str] = {
+    "fast": "qwen2.5:1.5b",
+    "standard": "qwen2.5:7b-instruct",
+    "heavy": "qwen2.5:14b",
+    "power": "qwen2.5:14b",
+    "judge": "qwen2.5:7b-instruct",
+}
+
 
 # Custom exceptions
 class OllamaException(Exception):
@@ -40,7 +64,7 @@ class OllamaJSONParseError(OllamaException):
 
 
 class OllamaClient:
-    """Client for Ollama API."""
+    """Client for Ollama API with NVIDIA GPU acceleration and dynamic model switching."""
     
     def __init__(
         self,
@@ -48,6 +72,7 @@ class OllamaClient:
         model: str = "qwen2.5:7b-instruct",
         timeout: int = 300,
         max_retries: int = 3,
+        use_gpu: bool = True,
     ):
         """
         Initialize Ollama client.
@@ -57,12 +82,30 @@ class OllamaClient:
             model: Model name to use
             timeout: Request timeout in seconds
             max_retries: Maximum number of retries
+            use_gpu: Whether to enable NVIDIA GPU offloading (num_gpu=1)
         """
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout = timeout
         self.max_retries = max_retries
+        self.use_gpu = use_gpu
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
+    
+    def set_model(self, model: str) -> None:
+        """Dynamically switch the active model."""
+        self.model = model
+        self.logger.info(f"Switched model to: {model}")
+    
+    def set_tier(self, tier: str) -> None:
+        """Set model based on tier ('fast', 'standard', 'heavy', 'power')."""
+        if tier in MODEL_TIERS:
+            self.set_model(MODEL_TIERS[tier])
+        else:
+            self.logger.warning(f"Unknown tier: {tier}")
+    
+    def is_available(self) -> bool:
+        """Public helper to check if Ollama server is reachable."""
+        return self._is_available()
     
     def _is_available(self) -> bool:
         """Check if Ollama server is available."""
@@ -85,6 +128,7 @@ class OllamaClient:
         result = {
             "server_available": False,
             "model_available": False,
+            "models_path": os.getenv("OLLAMA_MODELS", DEFAULT_OLLAMA_MODELS),
             "timestamp": datetime.now().isoformat(),
             "errors": [],
         }
@@ -149,15 +193,22 @@ class OllamaClient:
             raise OllamaConnectionError(error_msg)
         
         try:
-            response = requests.post(
-                f"{self.base_url}/api/generate",
-                json={
-                    "model": self.model,
-                    "prompt": prompt,
+            payload = {
+                "model": self.model,
+                "prompt": prompt,
+                "temperature": temperature,
+                "top_p": top_p,
+                "stream": stream,
+                "options": {
                     "temperature": temperature,
                     "top_p": top_p,
-                    "stream": stream,
+                    "num_gpu": 99 if self.use_gpu else 0,
+                    "num_ctx": 1024,
                 },
+            }
+            response = requests.post(
+                f"{self.base_url}/api/generate",
+                json=payload,
                 timeout=self.timeout,
             )
             response.raise_for_status()
@@ -382,16 +433,47 @@ class OllamaClient:
             raise OllamaConnectionError(error_msg)
 
 
-# Global client instance
+# Global client instance cache
 _client: Optional[OllamaClient] = None
+_clients: Dict[str, OllamaClient] = {}
 
 
 def get_ollama_client(
     base_url: str = "http://localhost:11434",
     model: str = "qwen2.5:7b-instruct",
+    tier: Optional[str] = None,
+    use_gpu: bool = True,
 ) -> OllamaClient:
-    """Get or create global Ollama client."""
-    global _client
+    """
+    Get or create cached Ollama client for the given model or tier.
+    
+    Args:
+        base_url: Ollama API URL
+        model: Model name (ignored if tier is specified)
+        tier: Model tier ('fast', 'standard', 'heavy', 'power', 'judge')
+        use_gpu: Whether to enable NVIDIA GPU offloading
+        
+    Returns:
+        OllamaClient instance
+    """
+    global _client, _clients
+    
+    if tier and tier in MODEL_TIERS:
+        model = MODEL_TIERS[tier]
+    
+    key = f"{base_url}:{model}:{use_gpu}"
+    if key not in _clients:
+        _clients[key] = OllamaClient(
+            base_url=base_url,
+            model=model,
+            use_gpu=use_gpu,
+        )
+    
+    # Maintain legacy _client pointer for backward compatibility
     if _client is None:
-        _client = OllamaClient(base_url=base_url, model=model)
-    return _client
+        _client = _clients[key]
+    
+    if tier is None and model == "qwen2.5:7b-instruct" and base_url == "http://localhost:11434" and use_gpu:
+        return _client
+        
+    return _clients[key]

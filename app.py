@@ -22,10 +22,12 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 # Import UI modules
 from ui import dashboard, pipeline_view, trace_view, failure_view, propagation_view, analytics_view, feedback_view
+from ui.style import inject_custom_styles
 
 
 def main():
     """Main application entry point."""
+    inject_custom_styles()
     st.title("🔍 FailureForensicsTool")
     st.markdown("""
     ## Failure Analysis and Root-Cause Diagnosis in Multi-Step AI Pipelines

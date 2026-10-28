@@ -88,6 +88,10 @@ class RootCauseCandidate(BaseModel):
     local_severity: float = Field(ge=0.0, le=1.0, description="Local severity")
     downstream_impact: float = Field(ge=0.0, le=1.0, description="Downstream impact")
     reasoning: str = Field(default="", description="Why this is a candidate")
+    
+    def __getitem__(self, item: str) -> Any:
+        """Allow dict-like subscripting for backward compatibility with tests."""
+        return getattr(self, item)
 
 
 class RootCauseAnalysis(BaseModel):

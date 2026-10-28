@@ -37,9 +37,15 @@ class IntakeStep(PipelineStep):
         try:
             # Validate and normalize input
             if not isinstance(step_input.data, str):
-                # Convert to string if needed
                 if isinstance(step_input.data, dict):
-                    data = step_input.data.get("document", step_input.data.get("text", ""))
+                    data = (
+                        step_input.data.get("document") or
+                        step_input.data.get("text") or
+                        step_input.data.get("raw_text") or
+                        step_input.data.get("input") or
+                        step_input.data.get("content") or
+                        next((v for v in step_input.data.values() if isinstance(v, str) and v.strip()), "")
+                    )
                 else:
                     data = str(step_input.data)
             else:

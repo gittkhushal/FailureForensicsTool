@@ -1,6 +1,7 @@
 """Trace exploration and analysis view."""
 
 import streamlit as st
+import json
 from src.storage.database import Database
 from src.storage.repositories import TraceRepository
 
@@ -121,20 +122,31 @@ def render():
         
         st.subheader("📥 Export")
         
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         
         with col1:
-            if st.button("💾 Export as JSON"):
-                trace_json = trace.model_dump(mode='json')
-                st.download_button(
-                    label="Download JSON",
-                    data=str(trace_json),
-                    file_name=f"trace_{trace.trace_id[:8]}.json",
-                    mime="application/json"
-                )
-        
+            trace_json = json.dumps(trace.model_dump(mode='json'), indent=2)
+            st.download_button(
+                label="💾 Download Raw JSON",
+                data=trace_json,
+                file_name=f"trace_{trace.trace_id[:8]}.json",
+                mime="application/json",
+                use_container_width=True
+            )
+            
         with col2:
-            if st.button("🗑️ Delete Trace"):
+            from src.failure.report_exporter import ForensicsReportExporter
+            report_md = ForensicsReportExporter.generate_markdown(trace)
+            st.download_button(
+                label="📄 Download Forensics Report (.md)",
+                data=report_md,
+                file_name=f"forensics_report_{trace.trace_id[:8]}.md",
+                mime="text/markdown",
+                use_container_width=True
+            )
+        
+        with col3:
+            if st.button("🗑️ Delete Trace", use_container_width=True):
                 repo.delete(trace.trace_id)
                 st.success("Trace deleted")
                 st.rerun()

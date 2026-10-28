@@ -126,22 +126,42 @@ class RootCauseEngine:
     
     def _calculate_rcc(
         self,
-        local_severity: float,
-        downstream_impact: float,
+        local_severity: Any,
+        downstream_impact: Any = 0.0,
+        trace: Optional[Trace] = None,
+        propagation_analysis: Optional[PropagationAnalysis] = None,
     ) -> float:
         """
         Calculate Root Cause Confidence.
         
+        Supports both signatures:
+        - _calculate_rcc(local_severity: float, downstream_impact: float)
+        - _calculate_rcc(span: Span, failure: Failure, trace: Trace, propagation_analysis: PropagationAnalysis)
+        
         Args:
-            local_severity: Local severity (1.0 - judge_score)
-            downstream_impact: Downstream propagation impact
+            local_severity: Local severity float or Span instance
+            downstream_impact: Downstream impact float or Failure instance
+            trace: Trace instance (if passing objects)
+            propagation_analysis: PropagationAnalysis instance (if passing objects)
             
         Returns:
             RCC score (0-1)
         """
-        # RCC = weighted combination
-        # 60% local signals, 40% propagation effects
-        rcc = 0.6 * local_severity + 0.4 * downstream_impact
+        # If called with (span, failure, trace, propagation_analysis)
+        if isinstance(local_severity, Span):
+            span = local_severity
+            prop = propagation_analysis if propagation_analysis is not None else (
+                downstream_impact if isinstance(downstream_impact, PropagationAnalysis) else None
+            )
+            judge_score = span.judge_score if span.judge_score is not None else 0.5
+            local_sev = 1.0 - judge_score
+            downstream_imp = 0.0
+            if prop and isinstance(prop, PropagationAnalysis):
+                downstream_imp = self._get_downstream_impact(span, prop)
+            return self._calculate_rcc(local_sev, downstream_imp)
+            
+        # RCC = weighted combination: 60% local signals, 40% propagation effects
+        rcc = 0.6 * float(local_severity) + 0.4 * float(downstream_impact)
         return min(1.0, max(0.0, rcc))
     
     def _get_downstream_impact(

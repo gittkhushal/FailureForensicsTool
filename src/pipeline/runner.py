@@ -19,25 +19,65 @@ logger = logging.getLogger(__name__)
 
 
 class PipelineRunner:
-    """High-level interface for running pipelines."""
+    """High-level interface for running pipelines with optional persistence and evaluation."""
     
-    def __init__(self, pipeline: Pipeline):
+    def __init__(
+        self,
+        pipeline: Optional[Pipeline] = None,
+        auto_persist: bool = False,
+        db: Optional[Any] = None,
+    ):
         """
         Initialize runner.
         
         Args:
-            pipeline: Pipeline instance
+            pipeline: Pipeline instance. If None, default demo pipeline is created.
+            auto_persist: Whether to automatically persist traces to SQLite
+            db: Optional Database instance for persistence
         """
+        if pipeline is None:
+            pipeline = self._create_default_pipeline()
+            
         self.pipeline = pipeline
+        self.auto_persist = auto_persist
+        self.db = db
         self.logger = logging.getLogger(f"{__name__}.{pipeline.name}")
         self.execution_history: List[Trace] = []
     
-    def run(self, input_data: Any) -> tuple[Any, Trace]:
+    @staticmethod
+    def _create_default_pipeline() -> Pipeline:
+        """Create the standard 4-step demonstration pipeline."""
+        from src.pipeline.intake import IntakeStep
+        from src.pipeline.extraction import ExtractionStep
+        from src.pipeline.classification import ClassificationStep
+        from src.pipeline.summarization import SummarizationStep
+        
+        pipeline = Pipeline(name="demo_pipeline")
+        pipeline.add_step(IntakeStep())
+        pipeline.add_step(ExtractionStep())
+        pipeline.add_step(ClassificationStep())
+        pipeline.add_step(SummarizationStep())
+        return pipeline
+    
+    def execute_demo(self, input_data: Any) -> tuple[Any, Trace]:
+        """
+        Convenience method to execute input against the demo pipeline.
+        
+        Args:
+            input_data: Input to process
+            
+        Returns:
+            Tuple of (output, trace)
+        """
+        return self.run(input_data)
+    
+    def run(self, input_data: Any, evaluate: bool = False) -> tuple[Any, Trace]:
         """
         Run pipeline on single input.
         
         Args:
             input_data: Input to process
+            evaluate: If True, automatically evaluate spans and detect failures
             
         Returns:
             Tuple of (output, trace)
@@ -46,6 +86,28 @@ class PipelineRunner:
         
         try:
             output, trace = self.pipeline.execute(input_data)
+            
+            # Optional in-flight evaluation
+            if evaluate:
+                try:
+                    from src.evaluation.evaluator import Evaluator
+                    evaluator = Evaluator()
+                    evaluator.evaluate_trace(trace)
+                except Exception as eval_err:
+                    self.logger.warning(f"In-flight evaluation failed: {eval_err}")
+            
+            # Automatic SQLite persistence if enabled
+            if self.auto_persist:
+                try:
+                    from src.storage.database import Database
+                    from src.storage.repositories import TraceRepository
+                    db_instance = self.db if self.db is not None else Database()
+                    repo = TraceRepository(db_instance)
+                    repo.save(trace)
+                    self.logger.debug(f"Auto-persisted trace {trace.trace_id} to database")
+                except Exception as persist_err:
+                    self.logger.warning(f"Failed to auto-persist trace: {persist_err}")
+            
             self.execution_history.append(trace)
             return output, trace
         except Exception as e:

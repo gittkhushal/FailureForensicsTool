@@ -6,6 +6,9 @@ Verification script to test all fixes for critical issues.
 import sys
 import traceback
 
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+
 def test_imports():
     """Test that all modules import correctly."""
     print("=" * 60)
@@ -195,7 +198,7 @@ def test_readme_status():
     print("=" * 60)
     
     try:
-        with open("README.md", "r") as f:
+        with open("README.md", "r", encoding="utf-8", errors="ignore") as f:
             content = f.read()
         
         # Check for realistic status

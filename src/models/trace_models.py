@@ -50,6 +50,15 @@ class Span(BaseModel):
     started_at: Optional[datetime] = Field(default=None, description="Start timestamp")
     completed_at: Optional[datetime] = Field(default=None, description="Completion timestamp")
 
+    @property
+    def error_message(self) -> Optional[str]:
+        """Backward-compatible alias for error."""
+        return self.error
+
+    @error_message.setter
+    def error_message(self, val: Optional[str]) -> None:
+        self.error = val
+
 
 class TraceStatus(str, Enum):
     """Status of trace execution."""

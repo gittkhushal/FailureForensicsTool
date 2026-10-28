@@ -43,9 +43,22 @@ class Evaluator:
         
         for span in trace.spans:
             try:
+                # Deterministic intake step succeeds without needing heavy LLM judging
+                if span.step_name.lower() == "intake" and not span.error:
+                    span.judge_score = 1.0
+                    res = JudgeResult(
+                        span_id=span.span_id,
+                        step_name=span.step_name,
+                        overall_score=1.0,
+                        passed=True,
+                        reasoning="Deterministic input normalization succeeded without errors.",
+                    )
+                    results.append(res)
+                    continue
+                    
                 result = self.judge.evaluate(
                     step_name=span.step_name,
-                    step_type="unknown",  # Would be derived from step
+                    step_type=span.step_name,
                     input_data=span.input_data,
                     output_data=span.output_data,
                 )
